@@ -1,318 +1,399 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Edy · Arca Agent</title>
-  <style>
-    :root {
-      --rojo: #CC0000;
-      --negro: #1A1A1A;
-      --gris-fondo: #F5F5F5;
-      --gris-texto: #888888;
-      --blanco: #FFFFFF;
-      --gris-borde: #E5E5E5;
-    }
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Edy · Arca Agent</title>
+    <style>
+      :root {
+        --rojo: #cc0000;
+        --negro: #1a1a1a;
+        --gris-fondo: #f5f5f5;
+        --gris-texto: #888888;
+        --blanco: #ffffff;
+        --gris-borde: #e5e5e5;
+      }
 
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
 
-    body {
-      width: 280px;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: var(--gris-fondo);
-      color: var(--negro);
-    }
+      body {
+        width: 280px;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: var(--gris-fondo);
+        color: var(--negro);
+      }
 
-    .card {
-      background: var(--blanco);
-      border-radius: 14px;
-      margin: 8px;
-      padding: 14px;
-      box-shadow: 0 4px 18px rgba(0,0,0,0.08);
-    }
+      .card {
+        background: var(--blanco);
+        border-radius: 14px;
+        margin: 8px;
+        padding: 14px;
+        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08);
+      }
 
-    /* ---------- Header ---------- */
-    .header {
-      display: flex;
-      align-items: center;
-      font-size: 12px;
-      margin-bottom: 14px;
-    }
-    .header .dot {
-      width: 8px; height: 8px;
-      border-radius: 50%;
-      background: var(--rojo);
-      margin-right: 6px;
-    }
-    .header .brand { font-weight: 700; }
-    .header .org { color: var(--gris-texto); margin-left: 5px; }
-    .header .tag {
-      margin-left: auto;
-      color: var(--gris-texto);
-      font-size: 11px;
-      font-variant-numeric: tabular-nums;
-    }
-    .header .rec {
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      color: var(--negro);
-      font-weight: 600;
-    }
-    .header .rec .blink {
-      width: 7px; height: 7px;
-      border-radius: 50%;
-      background: var(--rojo);
-      animation: blink 1s steps(2, start) infinite;
-    }
-    @keyframes blink { 50% { opacity: 0; } }
+      /* ---------- Header ---------- */
+      .header {
+        display: flex;
+        align-items: center;
+        font-size: 12px;
+        margin-bottom: 14px;
+      }
+      .header .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--rojo);
+        margin-right: 6px;
+      }
+      .header .brand {
+        font-weight: 700;
+      }
+      .header .org {
+        color: var(--gris-texto);
+        margin-left: 5px;
+      }
+      .header .tag {
+        margin-left: auto;
+        color: var(--gris-texto);
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+      }
+      .header .rec {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        color: var(--negro);
+        font-weight: 600;
+      }
+      .header .rec .blink {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--rojo);
+        animation: blink 1s steps(2, start) infinite;
+      }
+      @keyframes blink {
+        50% {
+          opacity: 0;
+        }
+      }
 
-    /* ---------- Mascota ---------- */
-    .mascota-wrap {
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      position: relative;
-      height: 140px;
-      margin: 6px 0 10px;
-    }
-    /* Disco circular que recorta la imagen y deja ver la cabeza en zoom */
-    .mascota-disco {
-      width: 104px;
-      height: 104px;
-      border-radius: 50%;
-      overflow: hidden;
-      position: relative;
-      z-index: 2;
-      border: 3px solid var(--rojo);
-      background: var(--blanco);
-      display: flex;
-      justify-content: center;
-      align-items: flex-start;
-    }
-    .mascota-disco img {
-      /* zoom: la imagen es más grande que el disco y se sube para encuadrar la cabeza */
-      width: 165%;
-      height: auto;
-      transform: translateY(-6%);
-      object-fit: cover;
-    }
-    /* ondas animadas alrededor de la mascota */
-    .pulse {
-      position: absolute;
-      border: 2px solid var(--rojo);
-      border-radius: 50%;
-      opacity: 0;
-      z-index: 1;
-    }
-    .animating .pulse {
-      animation: pulse 2s ease-out infinite;
-    }
-    .animating .pulse:nth-child(2) { animation-delay: 0.6s; }
-    .animating .pulse:nth-child(3) { animation-delay: 1.2s; }
-    @keyframes pulse {
-      0%   { width: 104px; height: 104px; opacity: 0.7; }
-      100% { width: 165px; height: 165px; opacity: 0; }
-    }
+      /* ---------- Mascota ---------- */
+      .mascota-wrap {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        position: relative;
+        height: 140px;
+        margin: 6px 0 10px;
+      }
+      /* Disco circular que recorta la imagen y deja ver la cabeza en zoom */
+      .mascota-disco {
+        width: 104px;
+        height: 104px;
+        border-radius: 50%;
+        overflow: hidden;
+        position: relative;
+        z-index: 2;
+        border: 10px solid var(--rojo);
+        background: var(--blanco);
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+      }
+      .mascota-disco img {
+        /* zoom: la imagen es más grande que el disco y se sube para encuadrar la cabeza */
+        width: 65%;
+        height: auto;
+        transform: translateY(-6%);
+        object-fit: cover;
+      }
+      /* ondas animadas alrededor de la mascota */
+      .pulse {
+        position: absolute;
+        border: 2px solid var(--rojo);
+        border-radius: 50%;
+        opacity: 0;
+        z-index: 1;
+      }
+      .animating .pulse {
+        animation: pulse 2s ease-out infinite;
+      }
+      .animating .pulse:nth-child(2) {
+        animation-delay: 0.6s;
+      }
+      .animating .pulse:nth-child(3) {
+        animation-delay: 1.2s;
+      }
+      @keyframes pulse {
+        0% {
+          width: 104px;
+          height: 104px;
+          opacity: 0.7;
+        }
+        100% {
+          width: 165px;
+          height: 165px;
+          opacity: 0;
+        }
+      }
 
-    /* ---------- Textos ---------- */
-    .titulo {
-      text-align: center;
-      font-size: 16px;
-      font-weight: 700;
-      color: var(--negro);
-    }
-    .subtitulo {
-      text-align: center;
-      font-size: 12px;
-      color: var(--gris-texto);
-      margin-top: 4px;
-    }
+      /* ---------- Textos ---------- */
+      .titulo {
+        text-align: center;
+        font-size: 16px;
+        font-weight: 700;
+        color: var(--negro);
+      }
+      .subtitulo {
+        text-align: center;
+        font-size: 12px;
+        color: var(--gris-texto);
+        margin-top: 4px;
+      }
 
-    /* ---------- Botones ---------- */
-    .botones {
-      display: flex;
-      gap: 8px;
-      margin-top: 16px;
-    }
-    button {
-      flex: 1;
-      border: none;
-      border-radius: 9px;
-      padding: 10px 0;
-      font-size: 13px;
-      font-weight: 600;
-      cursor: pointer;
-      font-family: inherit;
-    }
-    .btn-rojo { background: var(--rojo); color: var(--blanco); }
-    .btn-rojo:hover { background: #b00000; }
-    .btn-disabled {
-      background: var(--gris-fondo);
-      color: #BBBBBB;
-      cursor: not-allowed;
-    }
-    .btn-negro { background: var(--negro); color: var(--blanco); width: 100%; }
-    .btn-negro:hover { background: #000; }
-    .btn-outline {
-      background: var(--blanco);
-      color: var(--negro);
-      border: 1px solid var(--gris-borde);
-      width: 100%;
-    }
-    .btn-outline:hover { background: var(--gris-fondo); }
+      /* ---------- Botones ---------- */
+      .botones {
+        display: flex;
+        gap: 8px;
+        margin-top: 16px;
+      }
+      button {
+        flex: 1;
+        border: none;
+        border-radius: 9px;
+        padding: 10px 0;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        font-family: inherit;
+      }
+      .btn-rojo {
+        background: var(--rojo);
+        color: var(--blanco);
+      }
+      .btn-rojo:hover {
+        background: #b00000;
+      }
+      .btn-disabled {
+        background: var(--gris-fondo);
+        color: #bbbbbb;
+        cursor: not-allowed;
+      }
+      .btn-negro {
+        background: var(--negro);
+        color: var(--blanco);
+        width: 100%;
+      }
+      .btn-negro:hover {
+        background: #000;
+      }
+      .btn-outline {
+        background: var(--blanco);
+        color: var(--negro);
+        border: 1px solid var(--gris-borde);
+        width: 100%;
+      }
+      .btn-outline:hover {
+        background: var(--gris-fondo);
+      }
 
-    /* ---------- Barra de progreso ---------- */
-    .progreso {
-      height: 5px;
-      background: var(--gris-borde);
-      border-radius: 3px;
-      overflow: hidden;
-      margin: 14px 0;
-    }
-    .progreso .barra {
-      height: 100%;
-      width: 0%;
-      background: var(--rojo);
-      border-radius: 3px;
-      transition: width 0.4s ease;
-    }
+      /* ---------- Barra de progreso ---------- */
+      .progreso {
+        height: 5px;
+        background: var(--gris-borde);
+        border-radius: 3px;
+        overflow: hidden;
+        margin: 14px 0;
+      }
+      .progreso .barra {
+        height: 100%;
+        width: 0%;
+        background: var(--rojo);
+        border-radius: 3px;
+        transition: width 0.4s ease;
+      }
 
-    /* ---------- Lista de campos detectados ---------- */
-    .lista-label {
-      font-size: 10px;
-      letter-spacing: 1px;
-      color: var(--gris-texto);
-      text-transform: uppercase;
-      margin-bottom: 8px;
-    }
-    .campo {
-      display: flex;
-      align-items: center;
-      font-size: 12px;
-      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-      padding: 4px 0;
-      animation: aparecer 0.35s ease;
-    }
-    .campo .punto {
-      width: 6px; height: 6px;
-      border-radius: 50%;
-      background: var(--rojo);
-      margin-right: 8px;
-    }
-    .campo .nombre { color: var(--negro); }
-    .campo .time {
-      margin-left: auto;
-      color: var(--gris-texto);
-      font-variant-numeric: tabular-nums;
-    }
-    @keyframes aparecer {
-      from { opacity: 0; transform: translateY(-4px); }
-      to   { opacity: 1; transform: translateY(0); }
-    }
+      /* ---------- Lista de campos detectados ---------- */
+      .lista-label {
+        font-size: 10px;
+        letter-spacing: 1px;
+        color: var(--gris-texto);
+        text-transform: uppercase;
+        margin-bottom: 8px;
+      }
+      .campo {
+        display: flex;
+        align-items: center;
+        font-size: 12px;
+        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        padding: 4px 0;
+        animation: aparecer 0.35s ease;
+      }
+      .campo .punto {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--rojo);
+        margin-right: 8px;
+      }
+      .campo .nombre {
+        color: var(--negro);
+      }
+      .campo .time {
+        margin-left: auto;
+        color: var(--gris-texto);
+        font-variant-numeric: tabular-nums;
+      }
+      @keyframes aparecer {
+        from {
+          opacity: 0;
+          transform: translateY(-4px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
 
-    /* ---------- Lista de pasos (ejecutando) ---------- */
-    .paso {
-      display: flex;
-      align-items: center;
-      font-size: 12.5px;
-      padding: 5px 0;
-      gap: 8px;
-    }
-    .paso .icono { width: 16px; text-align: center; flex-shrink: 0; }
-    .paso.done .texto { color: var(--negro); }
-    .paso.done .icono { color: #1aa251; }
-    .paso.actual .texto { color: var(--rojo); font-weight: 600; }
-    .paso.actual .icono { color: var(--rojo); }
-    .paso.pendiente .texto { color: #BBBBBB; }
-    .paso.pendiente .icono { color: #DDDDDD; }
+      /* ---------- Lista de pasos (ejecutando) ---------- */
+      .paso {
+        display: flex;
+        align-items: center;
+        font-size: 12.5px;
+        padding: 5px 0;
+        gap: 8px;
+      }
+      .paso .icono {
+        width: 16px;
+        text-align: center;
+        flex-shrink: 0;
+      }
+      .paso.done .texto {
+        color: var(--negro);
+      }
+      .paso.done .icono {
+        color: #1aa251;
+      }
+      .paso.actual .texto {
+        color: var(--rojo);
+        font-weight: 600;
+      }
+      .paso.actual .icono {
+        color: var(--rojo);
+      }
+      .paso.pendiente .texto {
+        color: #bbbbbb;
+      }
+      .paso.pendiente .icono {
+        color: #dddddd;
+      }
 
-    .hidden { display: none; }
-  </style>
-</head>
-<body>
-  <div class="card">
+      .hidden {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <!-- ===================== ESTADO IDLE ===================== -->
+      <section id="estado-idle">
+        <div class="header">
+          <span class="dot"></span>
+          <span class="brand">Edy</span>
+          <span class="org">· Arca Continental</span>
+          <span class="tag">v0.4</span>
+        </div>
 
-    <!-- ===================== ESTADO IDLE ===================== -->
-    <section id="estado-idle">
-      <div class="header">
-        <span class="dot"></span>
-        <span class="brand">Edy</span>
-        <span class="org">· Arca Continental</span>
-        <span class="tag">v0.4</span>
-      </div>
+        <div class="mascota-wrap">
+          <div class="mascota-disco">
+            <img src="icons/EdyNeutro.png" alt="Edy" />
+          </div>
+        </div>
 
-      <div class="mascota-wrap">
-        <div class="mascota-disco"><img src="icons/EdyNeutro.png" alt="Edy"></div>
-      </div>
+        <div class="titulo">Listo para observar</div>
+        <div class="subtitulo">Aprenderé viendo lo que haces.</div>
 
-      <div class="titulo">Listo para observar</div>
-      <div class="subtitulo">Aprenderé viendo lo que haces.</div>
+        <div class="botones">
+          <button id="btn-observar" class="btn-rojo">● Observar</button>
+          <button id="btn-ejecutar" class="btn-disabled" disabled>
+            ▶ Ejecutar
+          </button>
+        </div>
+      </section>
 
-      <div class="botones">
-        <button id="btn-observar" class="btn-rojo">● Observar</button>
-        <button id="btn-ejecutar" class="btn-disabled" disabled>▶ Ejecutar</button>
-      </div>
-    </section>
+      <!-- ===================== ESTADO OBSERVANDO ===================== -->
+      <section id="estado-observando" class="hidden">
+        <div class="header">
+          <span class="dot"></span>
+          <span class="brand">Edy</span>
+          <span class="org">· Arca Continental</span>
+          <span class="tag rec">REC <span class="blink"></span></span>
+        </div>
 
-    <!-- ===================== ESTADO OBSERVANDO ===================== -->
-    <section id="estado-observando" class="hidden">
-      <div class="header">
-        <span class="dot"></span>
-        <span class="brand">Edy</span>
-        <span class="org">· Arca Continental</span>
-        <span class="tag rec">REC <span class="blink"></span></span>
-      </div>
+        <div class="mascota-wrap animating">
+          <span class="pulse"></span>
+          <span class="pulse"></span>
+          <span class="pulse"></span>
+          <div class="mascota-disco">
+            <img src="icons/EdyPensando.png" alt="Edy observando" />
+          </div>
+        </div>
 
-      <div class="mascota-wrap animating">
-        <span class="pulse"></span>
-        <span class="pulse"></span>
-        <span class="pulse"></span>
-        <div class="mascota-disco"><img src="icons/EdyPensando.png" alt="Edy observando"></div>
-      </div>
+        <div class="titulo">Observando tu proceso...</div>
 
-      <div class="titulo">Observando tu proceso...</div>
+        <div class="progreso"><div class="barra" id="barra-obs"></div></div>
 
-      <div class="progreso"><div class="barra" id="barra-obs"></div></div>
+        <div class="lista-label">
+          Campos detectados · <span id="contador-campos">0</span>
+        </div>
+        <div id="lista-campos"></div>
 
-      <div class="lista-label">Campos detectados · <span id="contador-campos">0</span></div>
-      <div id="lista-campos"></div>
+        <div class="botones">
+          <button id="btn-detener" class="btn-negro">■ Detener</button>
+        </div>
+      </section>
 
-      <div class="botones">
-        <button id="btn-detener" class="btn-negro">■ Detener</button>
-      </div>
-    </section>
+      <!-- ===================== ESTADO EJECUTANDO ===================== -->
+      <section id="estado-ejecutando" class="hidden">
+        <div class="header">
+          <span class="dot"></span>
+          <span class="brand">Edy</span>
+          <span class="org">· Arca Continental</span>
+          <span class="tag">RUN</span>
+        </div>
 
-    <!-- ===================== ESTADO EJECUTANDO ===================== -->
-    <section id="estado-ejecutando" class="hidden">
-      <div class="header">
-        <span class="dot"></span>
-        <span class="brand">Edy</span>
-        <span class="org">· Arca Continental</span>
-        <span class="tag">RUN</span>
-      </div>
+        <div class="mascota-wrap animating">
+          <span class="pulse"></span>
+          <span class="pulse"></span>
+          <span class="pulse"></span>
+          <div class="mascota-disco">
+            <img src="icons/EdySonriente.png" alt="Edy ejecutando" />
+          </div>
+        </div>
 
-      <div class="mascota-wrap animating">
-        <span class="pulse"></span>
-        <span class="pulse"></span>
-        <span class="pulse"></span>
-        <div class="mascota-disco"><img src="icons/EdySonriente.png" alt="Edy ejecutando"></div>
-      </div>
+        <div class="titulo">Ejecutando solo...</div>
+        <div class="subtitulo" id="orden-info">
+          Orden #C-4821 · OXXO La Pastora
+        </div>
 
-      <div class="titulo">Ejecutando solo...</div>
-      <div class="subtitulo" id="orden-info">Orden #C-4821 · OXXO La Pastora</div>
+        <div class="progreso"><div class="barra" id="barra-eje"></div></div>
 
-      <div class="progreso"><div class="barra" id="barra-eje"></div></div>
+        <div id="lista-pasos"></div>
 
-      <div id="lista-pasos"></div>
+        <div class="botones">
+          <button id="btn-dashboard" class="btn-outline">
+            Ver en dashboard →
+          </button>
+        </div>
+      </section>
+    </div>
 
-      <div class="botones">
-        <button id="btn-dashboard" class="btn-outline">Ver en dashboard →</button>
-      </div>
-    </section>
-
-  </div>
-
-  <script src="popup.js"></script>
-</body>
+    <script src="popup.js"></script>
+  </body>
 </html>
