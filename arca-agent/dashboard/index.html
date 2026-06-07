@@ -2,10 +2,296 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>Arca Agent — Dashboard</title>
-  <!-- Panel de control principal: muestra datos capturados por la extensión -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ARCA·Agent · Dashboard</title>
+  <style>
+    :root {
+      --rojo: #CC0000;
+      --negro: #1A1A1A;
+      --gris-fondo: #F7F7F7;
+      --gris-texto: #888;
+      --blanco: #FFF;
+      --gris-borde: #E8E8E8;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--gris-fondo);
+      color: var(--negro);
+      min-height: 100vh;
+    }
+
+    /* ── Navbar ── */
+    nav {
+      background: var(--blanco);
+      border-bottom: 1px solid var(--gris-borde);
+      padding: 0 32px;
+      display: flex;
+      align-items: center;
+      height: 56px;
+      gap: 24px;
+    }
+    .nav-logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+    }
+    .nav-logo .logo-texto {
+      font-size: 15px;
+      font-weight: 800;
+      color: var(--rojo);
+      letter-spacing: -0.5px;
+    }
+    .nav-logo .logo-sub {
+      font-size: 9px;
+      letter-spacing: 2px;
+      color: var(--gris-texto);
+      display: block;
+      margin-top: -2px;
+      text-transform: uppercase;
+    }
+    .nav-logo .edy-circle {
+      width: 36px; height: 36px;
+      border-radius: 50%;
+      border: 2.5px solid var(--rojo);
+      overflow: hidden;
+      display: flex; align-items: flex-start; justify-content: center;
+      background: var(--blanco);
+      flex-shrink: 0;
+    }
+    .nav-logo .edy-circle img { width: 160%; transform: translateY(-5%); }
+
+    .nav-tabs { display: flex; gap: 4px; margin-left: 16px; }
+    .nav-tab {
+      padding: 6px 16px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--gris-texto);
+      cursor: pointer;
+      border: none;
+      background: none;
+      font-family: inherit;
+    }
+    .nav-tab.activo {
+      background: #fff0f0;
+      color: var(--rojo);
+      font-weight: 700;
+    }
+
+    /* ── Contenido ── */
+    .contenido { padding: 32px; max-width: 1200px; margin: 0 auto; }
+
+    .page-title { font-size: 26px; font-weight: 800; margin-bottom: 4px; }
+    .page-sub { font-size: 13px; color: var(--gris-texto); margin-bottom: 28px; }
+
+    /* ── Tarjetas de stats ── */
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
+    .stat-card {
+      background: var(--blanco);
+      border-radius: 14px;
+      padding: 20px 22px;
+      border: 1px solid var(--gris-borde);
+    }
+    .stat-label { font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--gris-texto); margin-bottom: 8px; }
+    .stat-valor { font-size: 32px; font-weight: 800; color: var(--negro); line-height: 1; }
+    .stat-delta { font-size: 12px; color: var(--rojo); margin-top: 6px; font-weight: 600; }
+    .stat-delta.estable { color: var(--gris-texto); font-weight: 400; }
+
+    /* ── Sección tabla ── */
+    .tabla-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .tabla-titulo {
+      font-size: 15px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .vivo {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: #fff0f0;
+      color: var(--rojo);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 9px;
+      border-radius: 20px;
+    }
+    .vivo .dot-vivo {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--rojo);
+      animation: blink 1s steps(2,start) infinite;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    .buscar {
+      border: 1px solid var(--gris-borde);
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 13px;
+      font-family: inherit;
+      color: var(--negro);
+      width: 240px;
+      outline: none;
+    }
+    .buscar:focus { border-color: var(--rojo); }
+
+    /* ── Tabla ── */
+    .tabla-wrap {
+      background: var(--blanco);
+      border-radius: 14px;
+      border: 1px solid var(--gris-borde);
+      overflow: hidden;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead tr { background: var(--blanco); }
+    th {
+      text-align: left;
+      padding: 13px 20px;
+      font-size: 10px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--gris-texto);
+      font-weight: 600;
+      border-bottom: 1px solid var(--gris-borde);
+    }
+    td { padding: 14px 20px; border-top: 1px solid var(--gris-borde); }
+    td:first-child { font-weight: 700; }
+    tr:hover td { background: #fafafa; }
+
+    /* Fila nueva con flash */
+    tr.nueva td { animation: flash 2s ease; }
+    @keyframes flash { 0% { background: #ffe5e5; } 100% { background: transparent; } }
+
+    /* ── Badges de estado ── */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .badge-ejecutando { background: var(--negro); color: var(--blanco); }
+    .badge-ejecutando::before { content: "●"; font-size: 8px; }
+    .badge-completada { background: #ffe5e5; color: var(--rojo); }
+    .badge-completada::before { content: "✓"; }
+    .badge-cola { background: #f0f0f0; color: var(--gris-texto); }
+    .badge-error { background: #ffe5e5; color: var(--rojo); }
+
+    /* ── Vacío / spinner ── */
+    .vacio { text-align: center; padding: 60px; color: var(--gris-texto); font-size: 14px; }
+    .spinner-wrap { text-align: center; padding: 60px; color: var(--gris-texto); }
+    .spinner {
+      display: inline-block;
+      width: 22px; height: 22px;
+      border: 3px solid var(--gris-borde);
+      border-top-color: var(--rojo);
+      border-radius: 50%;
+      animation: girar 0.7s linear infinite;
+      vertical-align: middle;
+      margin-left: 10px;
+    }
+    @keyframes girar { to { transform: rotate(360deg); } }
+
+    .hidden { display: none !important; }
+
+    @media (max-width: 768px) {
+      .stats { grid-template-columns: repeat(2, 1fr); }
+      .contenido { padding: 20px; }
+    }
+  </style>
 </head>
 <body>
+
+  <!-- Navbar -->
+  <nav>
+    <a class="nav-logo" href="#">
+      <div class="edy-circle">
+        <img src="../extension/icons/EdyNeutro.png" alt="Edy">
+      </div>
+      <div>
+        <span class="logo-texto">ARCA·Agent</span>
+        <span class="logo-sub">Edy Dashboard</span>
+      </div>
+    </a>
+    <div class="nav-tabs">
+      <button class="nav-tab activo">Órdenes</button>
+      <button class="nav-tab">Procesos</button>
+    </div>
+  </nav>
+
+  <!-- Contenido -->
+  <div class="contenido">
+
+    <div class="page-title">Órdenes procesadas hoy</div>
+    <div class="page-sub" id="page-sub">Cargando...</div>
+
+    <!-- Stats -->
+    <div class="stats">
+      <div class="stat-card">
+        <div class="stat-label">Órdenes automatizadas</div>
+        <div class="stat-valor" id="stat-total">—</div>
+        <div class="stat-delta" id="stat-delta-total"></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Portales activos</div>
+        <div class="stat-valor" id="stat-portales">—</div>
+        <div class="stat-delta" id="stat-delta-portales"></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Campos capturados</div>
+        <div class="stat-valor" id="stat-campos">—</div>
+        <div class="stat-delta" id="stat-delta-campos"></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Clics ahorrados</div>
+        <div class="stat-valor" id="stat-clics">—</div>
+        <div class="stat-delta estable" id="stat-delta-clics"></div>
+      </div>
+    </div>
+
+    <!-- Tabla -->
+    <div class="tabla-header">
+      <div class="tabla-titulo">
+        Tiempo real
+        <span class="vivo"><span class="dot-vivo"></span>EN VIVO</span>
+      </div>
+      <input class="buscar" type="text" id="filtro-buscar"
+             placeholder="Buscar cliente, SKU, orden..." oninput="renderTabla()">
+    </div>
+
+    <div class="tabla-wrap">
+      <div class="spinner-wrap" id="spinner">Cargando datos <span class="spinner"></span></div>
+      <table id="tabla" class="hidden">
+        <thead>
+          <tr>
+            <th>Orden</th>
+            <th>Cliente</th>
+            <th>SKUs</th>
+            <th>Importe</th>
+            <th>Hora</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+      <div class="vacio hidden" id="vacio">Aún no hay órdenes registradas.</div>
+    </div>
+
+  </div>
+
   <script src="dashboard.js"></script>
 </body>
 </html>

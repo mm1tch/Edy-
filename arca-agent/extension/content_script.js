@@ -19,7 +19,7 @@
   }
 
   // ---------- Config ----------
-  const DASHBOARD_URL = ""; // rellenar cuando el dashboard esté desplegado.
+  const DASHBOARD_URL = "http://127.0.0.1:5500/arca-agent/dashboard/index.html";
   const PASOS_EJECUCION = [
     "Abrir SAP / módulo VA01",
     "Capturar cliente_id",
@@ -27,6 +27,9 @@
     "Validar inventario...",
     "Confirmar pedido",
   ];
+
+  // Cuántos campos se han capturado en la grabación actual (para el resumen).
+  let camposCapturados = 0;
 
   // ---------- Grabación ----------
   function iniciarGrabacion() {
@@ -51,6 +54,7 @@
 
   // ---------- Conectar la UI con la lógica ----------
   widget.onObservar(() => {
+    camposCapturados = 0;
     widget.resetObservando();
     widget.mostrarEstado("observando");
     chrome.runtime.sendMessage({ tipo: "iniciar_grabacion" });
@@ -60,7 +64,11 @@
   widget.onDetener(() => {
     chrome.runtime.sendMessage({ tipo: "detener_grabacion" });
     detenerGrabacion();
-    widget.mostrarEstado("idle");
+    // Pasa al estado "aprendido": Edy ya sabe el proceso.
+    widget.setResumenAprendido(
+      camposCapturados + " campos · " + PASOS_EJECUCION.length + " pasos"
+    );
+    widget.mostrarEstado("aprendido");
     widget.habilitarEjecutar(true);
   });
 
@@ -73,11 +81,19 @@
 
   widget.onDashboard(() => {
     if (DASHBOARD_URL) {
-      chrome.runtime.sendMessage({
-        tipo: "abrir_dashboard",
-        url: DASHBOARD_URL,
-      });
+      chrome.runtime.sendMessage({ tipo: "abrir_dashboard", url: DASHBOARD_URL });
     }
+  });
+
+  widget.onPausar(() => {
+    // Detener ejecución → vuelve al estado "aprendido" (Edy sigue sabiendo el proceso).
+    chrome.runtime.sendMessage({ tipo: "detener_ejecucion" });
+    widget.mostrarEstado("aprendido");
+  });
+
+  widget.onNuevo(() => {
+    // Nuevo proceso → reinicia todo desde cero.
+    chrome.runtime.sendMessage({ tipo: "nuevo_proceso" });
   });
 
   // ---------- Mensajes entrantes del background ----------
@@ -85,6 +101,7 @@
     if (!msg || !msg.tipo) return;
     switch (msg.tipo) {
       case "campo_detectado":
+        camposCapturados++;
         widget.agregarCampoDetectado(msg.nombre, msg.time);
         break;
       case "paso_actual":
@@ -92,6 +109,9 @@
         break;
       case "paso_completado":
         widget.marcarPasoCompletado(msg.paso);
+        break;
+      case "flujo_completado":
+        widget.mostrarEstado("completado");
         break;
     }
   });
