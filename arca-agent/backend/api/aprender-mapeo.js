@@ -8,6 +8,26 @@ export default async function handler(req, res) {
     return res.status(204).end();
   }
 
+  if (req.method === "GET") {
+    return res.status(200).json({
+      ok: true,
+      endpoint: "/api/aprender-mapeo",
+      method: "POST",
+      message: "Este endpoint se prueba con POST enviando acciones grabadas.",
+      example: {
+        tipo: "aprender_mapeo",
+        acciones: [
+          {
+            tipo: "input",
+            selector: "#cliente",
+            valor: "123",
+            nombreCampo: "Cliente",
+          },
+        ],
+      },
+    });
+  }
+
   if (req.method !== "POST") {
     return res.status(405).json({ ok: false, error: "Metodo no permitido" });
   }

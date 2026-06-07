@@ -53,7 +53,33 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === "POST" && req.url === "/api/aprender-mapeo") {
+    if (req.url === "/api/aprender-mapeo") {
+      if (req.method === "GET") {
+        sendJson(res, 200, {
+          ok: true,
+          endpoint: "/api/aprender-mapeo",
+          method: "POST",
+          message: "Este endpoint se prueba con POST enviando acciones grabadas.",
+          example: {
+            tipo: "aprender_mapeo",
+            acciones: [
+              {
+                tipo: "input",
+                selector: "#cliente",
+                valor: "123",
+                nombreCampo: "Cliente",
+              },
+            ],
+          },
+        });
+        return;
+      }
+
+      if (req.method !== "POST") {
+        sendJson(res, 405, { ok: false, error: "Metodo no permitido" });
+        return;
+      }
+
       const payload = await readJsonBody(req);
 
       if (payload.tipo !== "aprender_mapeo") {
@@ -84,8 +110,10 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`Arca Agent backend escuchando en el puerto ${PORT}`);
-  console.log(`Dashboard local: http://localhost:${PORT}/api/health`);
-  console.log(`Endpoint local: http://localhost:${PORT}/api/aprender-mapeo`);
+  console.log(`Dashboard local: http://localhost:${PORT}/`);
+  console.log(`Health local: http://localhost:${PORT}/api/health`);
+  console.log(`Gemini local: POST http://localhost:${PORT}/api/aprender-mapeo`);
+  console.log(`Pedidos local: http://localhost:${PORT}/api/pedidos`);
 });
 
 function loadEnv(envPath) {
