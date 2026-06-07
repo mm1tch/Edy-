@@ -325,6 +325,9 @@
     secEjecutando.classList.toggle("hidden", estado !== "ejecutando");
     secCompletado.classList.toggle("hidden", estado !== "completado");
     if (estado === "completado") lanzarConfeti();
+    // Auto-open the panel on active states so the user knows Edy is still running
+    // even after page navigation (the panel resets to closed on every new page).
+    if (estado === "observando" || estado === "ejecutando") abrir();
   }
 
   // Actualiza el resumen del estado aprendido (ej: "4 campos · 5 pasos")

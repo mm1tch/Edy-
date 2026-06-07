@@ -214,9 +214,17 @@
   // This avoids the background roundtrip race: clicks on a new page happen before
   // content_script_listo response arrives, causing early events to be missed.
   if (isContextValid()) {
-    chrome.storage.local.get('estado_agente', ({ estado_agente }) => {
+    chrome.storage.local.get(['estado_agente', 'acciones_grabadas'], ({ estado_agente, acciones_grabadas }) => {
       console.log('[Edy] storage check on load — estado_agente:', estado_agente);
-      if (estado_agente === 'observando') iniciarRecording();
+      if (estado_agente === 'observando') {
+        iniciarRecording();
+        widget.resetObservando();
+        widget.mostrarEstado('observando');
+      } else if (estado_agente === 'idle' && (acciones_grabadas || []).length > 0) {
+        const n = (acciones_grabadas || []).length;
+        widget.setResumenAprendido(n + ' acciones · listo para ejecutar');
+        widget.mostrarEstado('aprendido');
+      }
     });
   }
 
@@ -466,6 +474,9 @@
   if (isContextValid()) {
     chrome.runtime.sendMessage({ tipo: 'content_script_listo' }, (resp) => {
       if (chrome.runtime.lastError || !resp) return;
+      // Storage check already set up recording — don't let a slow background
+      // response downgrade the widget back to idle.
+      if (isRecording) return;
       if (resp.estado === 'observando') {
         widget.mostrarEstado('observando');
         iniciarRecording();
