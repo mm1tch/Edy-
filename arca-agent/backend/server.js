@@ -7,7 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 loadEnv(path.join(__dirname, ".env"));
 
 const PORT = Number(process.env.PORT || 3000);
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.1-flash-lite";
 
 const server = http.createServer(async (req, res) => {
   setCorsHeaders(res);
