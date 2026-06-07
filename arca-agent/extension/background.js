@@ -19,6 +19,8 @@ const STORAGE_KEYS = {
   backendUrl:   "geminiBackendUrl",
   appsScriptUrl:"appsScriptUrl",
   datosNuevos:  "datos_nuevos",
+  datosSugeridos:"datos_sugeridos",
+  ultimoPerfil: "ultimo_perfil_ejecucion",
   ultimoPedido: "ultimo_pedido",
   ultimoEnvioSheets: "ultimo_envio_sheets",
   originTabId:  "origin_tab_id",
@@ -107,6 +109,8 @@ async function iniciarGrabacion(tabId) {
     [STORAGE_KEYS.acciones]:       [],
     [STORAGE_KEYS.mapeo]:          null,
     [STORAGE_KEYS.datosNuevos]:    {},
+    [STORAGE_KEYS.datosSugeridos]: {},
+    [STORAGE_KEYS.ultimoPerfil]:   null,
     [STORAGE_KEYS.originTabId]:    originTabId,
     [STORAGE_KEYS.originUrl]:      originUrl,
     [STORAGE_KEYS.originSnapshot]: [],
@@ -219,7 +223,12 @@ async function aprenderMapeoConBackend(acciones) {
   const data  = await resp.json();
   const mapeo = data.mapeo || data;
 
-  await guardarLocal({ [STORAGE_KEYS.mapeo]: mapeo });
+  await guardarLocal({
+    [STORAGE_KEYS.mapeo]:          mapeo,
+    [STORAGE_KEYS.datosSugeridos]: (mapeo?.datos_sugeridos && typeof mapeo.datos_sugeridos === "object")
+      ? mapeo.datos_sugeridos
+      : {},
+  });
   return mapeo;
 }
 
@@ -233,6 +242,7 @@ async function iniciarEjecucion(callerTabId) {
     STORAGE_KEYS.mapeo,
     STORAGE_KEYS.appsScriptUrl,
     STORAGE_KEYS.originUrl,
+    STORAGE_KEYS.datosSugeridos,
   ]);
 
   const mapeo   = storage[STORAGE_KEYS.mapeo];
@@ -247,10 +257,22 @@ async function iniciarEjecucion(callerTabId) {
   await chrome.action.setIcon({ path: ICONOS.pensando });
   await guardarLocal({ [STORAGE_KEYS.estado]: estado });
 
-  const datosNuevos = generarDatosNuevosAutomaticos(acciones);
-  await guardarLocal({ [STORAGE_KEYS.datosNuevos]: datosNuevos });
+  const datosSugeridos = (mapeo?.datos_sugeridos && typeof mapeo.datos_sugeridos === "object")
+    ? mapeo.datos_sugeridos
+    : (storage[STORAGE_KEYS.datosSugeridos] || {});
 
-  const plan = aplicarDatosNuevosAlPlan(construirPlanEjecucion(mapeo, acciones), datosNuevos);
+  const perfilEjecucion = await generarPerfilEjecucion(acciones);
+  const datosNuevos = generarDatosNuevosAutomaticos(acciones, perfilEjecucion, datosSugeridos);
+  await guardarLocal({
+    [STORAGE_KEYS.datosNuevos]: datosNuevos,
+    [STORAGE_KEYS.ultimoPerfil]: perfilEjecucion,
+  });
+
+  const plan = aplicarVariacionesAutonomasAlPlan(
+    construirPlanEjecucion(mapeo, acciones),
+    datosNuevos,
+    perfilEjecucion
+  );
   if (!plan.length) {
     throw new Error("No hay pasos ejecutables. Graba el flujo otra vez desde el inicio.");
   }
@@ -443,24 +465,86 @@ function construirPlanEjecucion(mapeo, acciones) {
   return grupos.map((g) => ({ nombre: g.nombre, acciones: g.acciones }));
 }
 
-function generarDatosNuevosAutomaticos(acciones) {
+async function generarPerfilEjecucion(acciones) {
+  const storage = await chrome.storage.local.get(STORAGE_KEYS.ultimoPerfil);
+  const anterior = storage[STORAGE_KEYS.ultimoPerfil] || {};
+  const seed = Date.now() + Math.floor(Math.random() * 100000);
+  const firstNames = ["Maria", "Ana", "Lucia", "Sofia", "Valeria", "Camila", "Elena", "Paola"];
+  const lastNames = ["Lopez", "Garcia", "Martinez", "Torres", "Ramirez", "Santos", "Vega", "Morales"];
+  const cities = ["Monterrey", "Guadalupe", "San Pedro", "Apodaca", "Santa Catarina", "Escobedo"];
+  const streets = ["Av Nueva", "Calle Roble", "Paseo Norte", "Av Central", "Calle Lago", "Privada Sol"];
+  const states = ["Nuevo Leon", "Jalisco", "Queretaro", "Coahuila", "Puebla", "Yucatan"];
+  const countries = ["Mexico", "Canada", "Estados Unidos"];
+  const zipCodes = ["64000", "66220", "67180", "66600", "64830", "44100", "76000", "97000"];
+
+  const firstName = elegirDistintoPorSeed(firstNames, seed, anterior.firstName);
+  const lastName = elegirDistintoPorSeed(lastNames, seed + 3, anterior.lastName);
+  const slug = (firstName + "." + lastName + "." + String(seed).slice(-4)).toLowerCase();
+
+  const productos = elegirProductosNuevos(acciones, seed, anterior.productos || [anterior.producto].filter(Boolean));
+
+  return {
+    seed,
+    firstName,
+    lastName,
+    fullName: firstName + " " + lastName,
+    email: slug + "@edy-demo.test",
+    password: "EdyDemo" + String(seed).slice(-4) + "!",
+    zipCode: elegirDistintoPorSeed(zipCodes, seed + 7, anterior.zipCode),
+    phone: "81" + String(80000000 + (seed % 9999999)).padStart(8, "0").slice(0, 8),
+    address: elegirPorSeed(streets, seed + 11) + " " + (100 + (seed % 899)),
+    city: elegirDistintoPorSeed(cities, seed + 13, anterior.city),
+    state: elegirDistintoPorSeed(states, seed + 17, anterior.state),
+    country: elegirDistintoPorSeed(countries, seed + 19, anterior.country),
+    producto: productos[0] || null,
+    productos,
+  };
+}
+
+function generarDatosNuevosAutomaticos(acciones, perfil, datosSugeridos) {
   const datos = {};
+  const sugeridos = (datosSugeridos && typeof datosSugeridos === "object") ? datosSugeridos : {};
+  let desdeGemini = 0;
+  let desdeFallbackLocal = 0;
 
   normalizarAcciones(acciones).forEach((accion, index) => {
     const tipo = normalizarTipoAccion(accion.tipo);
     if (tipo !== "input" && tipo !== "change") return;
     if (!accion.selector) return;
 
-    const valor = generarValorNuevoParaAccion(accion, index);
+    const sugerido = obtenerValorSugerido(accion, sugeridos);
+    const valor = sugerido ?? generarValorNuevoParaAccion(accion, index, perfil);
     if (valor === undefined || valor === null) return;
+
+    if (sugerido === null) desdeFallbackLocal++; else desdeGemini++;
     datos[accion.selector] = valor;
   });
 
-  console.log("[Edy] datos_nuevos generados:", Object.keys(datos).length, datos);
+  console.log(
+    "[Edy] datos_nuevos generados:", Object.keys(datos).length,
+    "(gemini:", desdeGemini, "· fallback local:", desdeFallbackLocal, ")",
+    datos
+  );
+  if (!Object.keys(sugeridos).length) {
+    console.warn("[Edy] datos_sugeridos vino vacío del mapeo aprendido — usando generador local como respaldo. " +
+      "Vuelve a grabar el flujo para que Gemini genere sugerencias (requiere el backend actualizado).");
+  }
   return datos;
 }
 
-function generarValorNuevoParaAccion(accion, index) {
+// Looks up a Gemini-suggested value for this action's selector.
+// Gemini learned the field semantics during mapping, so its suggestion
+// (datos_sugeridos) takes priority over the local heuristic generator.
+function obtenerValorSugerido(accion, sugeridos) {
+  const valor = [accion.selectorGrabado, accion.selector]
+    .filter(Boolean)
+    .map((selector) => sugeridos[selector])
+    .find((candidato) => candidato !== undefined && candidato !== null && String(candidato).trim() !== "");
+
+  return valor === undefined ? null : valor;
+}
+
+function generarValorNuevoParaAccion(accion, index, perfil) {
   const original = String(accion.valor ?? "");
   const textoCampo = normalizarNombreCampoSheets([
     accion.nombreCampo,
@@ -472,47 +556,47 @@ function generarValorNuevoParaAccion(accion, index) {
 
   if (contieneCampo(texto, ["first_name", "firstname", "nombre", "name"]) &&
       !contieneCampo(texto, ["last_name", "lastname", "apellido", "email", "username", "user_name"])) {
-    return asegurarValorDistinto("Maria", original, "Ana");
+    return asegurarValorDistinto(perfil.firstName, original, perfil.firstName + " " + String(perfil.seed).slice(-2));
   }
 
   if (contieneCampo(texto, ["last_name", "lastname", "apellido", "surname"])) {
-    return asegurarValorDistinto("Lopez", original, "Garcia");
+    return asegurarValorDistinto(perfil.lastName, original, perfil.lastName + " " + String(perfil.seed).slice(-2));
   }
 
   if (contieneCampo(texto, ["full_name", "customer", "cliente", "client", "nombre_cliente"])) {
-    return asegurarValorDistinto("Maria Lopez", original, "Ana Garcia");
+    return asegurarValorDistinto(perfil.fullName, original, perfil.fullName + " " + String(perfil.seed).slice(-2));
   }
 
   if (contieneCampo(texto, ["email", "correo", "mail"])) {
-    return asegurarValorDistinto("maria.lopez.edy@example.com", original, "ana.garcia.edy@example.com");
+    return asegurarValorDistinto(perfil.email, original, "edy." + perfil.seed + "@edy-demo.test");
   }
 
   if (contieneCampo(texto, ["password", "contrasena", "pass"])) {
-    return asegurarValorDistinto("EdyDemo2026!", original, "EdyDemo2026#");
+    return asegurarValorDistinto(perfil.password, original, perfil.password.replace("!", "#"));
   }
 
   if (contieneCampo(texto, ["zip_code", "postal_code", "zipcode", "codigo_postal", "cp", "zip", "postal"])) {
-    return asegurarValorDistinto("67890", original, "64000");
+    return asegurarValorDistinto(perfil.zipCode, original, String(Number(perfil.zipCode) + 1));
   }
 
   if (contieneCampo(texto, ["phone", "telefono", "tel", "mobile", "celular"])) {
-    return asegurarValorDistinto("8185550199", original, "8185550123");
+    return asegurarValorDistinto(perfil.phone, original, "81" + String(70000000 + (perfil.seed % 9999999)).padStart(8, "0").slice(0, 8));
   }
 
   if (contieneCampo(texto, ["address", "direccion", "street", "calle"])) {
-    return asegurarValorDistinto("Av Nueva 123", original, "Calle Demo 456");
+    return asegurarValorDistinto(perfil.address, original, perfil.address + " Int " + ((perfil.seed % 20) + 1));
   }
 
   if (contieneCampo(texto, ["city", "ciudad", "municipio"])) {
-    return asegurarValorDistinto("Monterrey", original, "Guadalupe");
+    return asegurarValorDistinto(perfil.city, original, perfil.city + " Centro");
   }
 
   if (contieneCampo(texto, ["state", "estado", "province", "provincia"])) {
-    return asegurarValorDistinto("Nuevo Leon", original, "Jalisco");
+    return asegurarValorDistinto(perfil.state, original, perfil.state + " Norte");
   }
 
   if (contieneCampo(texto, ["country", "pais"])) {
-    return asegurarValorDistinto("Mexico", original, "Canada");
+    return asegurarValorDistinto(perfil.country, original, perfil.country + " Demo");
   }
 
   if (contieneCampo(texto, ["quantity", "qty", "cantidad", "unidades"])) {
@@ -528,7 +612,7 @@ function generarValorNuevoParaAccion(accion, index) {
   }
 
   if (original.includes("@")) {
-    return asegurarValorDistinto("maria.lopez.edy@example.com", original, "ana.garcia.edy@example.com");
+    return asegurarValorDistinto(perfil.email, original, "edy." + perfil.seed + "@edy-demo.test");
   }
 
   if (original.trim()) {
@@ -538,14 +622,24 @@ function generarValorNuevoParaAccion(accion, index) {
   return "Dato nuevo " + (index + 1);
 }
 
-function aplicarDatosNuevosAlPlan(plan, datosNuevos) {
+function aplicarVariacionesAutonomasAlPlan(plan, datosNuevos, perfil) {
   if (!Array.isArray(plan) || !datosNuevos || typeof datosNuevos !== "object") return plan;
 
   let overridesAplicados = 0;
+  let productosCambiados = 0;
+  let indiceProducto = 0;
   const planConDatosNuevos = plan.map((paso) => ({
     ...paso,
     acciones: (paso.acciones || []).map((accion) => {
       const tipo = normalizarTipoAccion(accion.tipo);
+      if (tipo === "click") {
+        const producto = construirAccionProductoAlternativo(accion, perfil, indiceProducto);
+        if (!producto) return accion;
+        indiceProducto++;
+        productosCambiados++;
+        return producto;
+      }
+
       if (tipo !== "input" && tipo !== "change") return accion;
 
       const selectorConOverride = [accion.selectorGrabado, accion.selector]
@@ -563,7 +657,116 @@ function aplicarDatosNuevosAlPlan(plan, datosNuevos) {
   }));
 
   console.log("[Edy] datos_nuevos aplicados:", overridesAplicados);
+  console.log("[Edy] productos cambiados:", productosCambiados);
   return planConDatosNuevos;
+}
+
+function construirAccionProductoAlternativo(accion, perfil, indiceProducto = 0) {
+  const texto = normalizarTextoComparacion([
+    accion.selector,
+    accion.texto,
+    accion.nombreCampo,
+    accion.contexto,
+    accion.detalle?.id,
+    accion.detalle?.nombre,
+  ].filter(Boolean).join(" "));
+
+  const producto = perfil?.productos?.[indiceProducto] || perfil?.producto;
+  if (!esClickDeProducto(texto) || !producto) return null;
+
+  return {
+    ...accion,
+    selectorOriginal: accion.selector,
+    contextoOriginal: accion.contexto,
+    selector: producto.selector,
+    texto: accion.texto || "Add to cart",
+    contexto: producto.nombre,
+    detalle: {
+      id: producto.id,
+      nombre: producto.nombre,
+      precio: producto.precio,
+    },
+    productoAlternativo: producto,
+    preferirProductoDistinto: true,
+  };
+}
+
+function esClickDeProducto(texto) {
+  if (!texto) return false;
+  const esAgregarOSeleccionar = ["add", "cart", "agregar", "seleccionar", "comprar"].some((p) => texto.includes(p));
+  const pareceProducto = texto.includes("sauce-labs") || texto.includes("producto") || texto.includes("product") || texto.includes("item");
+  return esAgregarOSeleccionar && pareceProducto;
+}
+
+function elegirProductosNuevos(acciones, seed, productosAnteriores = []) {
+  const productos = productosConocidos();
+  const accionesProducto = normalizarAcciones(acciones).filter((accion) =>
+    normalizarTipoAccion(accion.tipo) === "click" &&
+    esClickDeProducto(normalizarTextoComparacion([
+      accion.selector,
+      accion.texto,
+      accion.nombreCampo,
+      accion.contexto,
+      accion.detalle?.id,
+      accion.detalle?.nombre,
+    ].filter(Boolean).join(" ")))
+  );
+
+  const esCatalogoConocido = accionesProducto.some((accion) => normalizarProductoId([
+    accion.selector,
+    accion.contexto,
+    accion.detalle?.id,
+    accion.detalle?.nombre,
+  ].filter(Boolean).join(" ")));
+  if (!esCatalogoConocido) return [];
+
+  const idsGrabados = new Set(accionesProducto
+    .map((accion) => normalizarProductoId(accion.detalle?.id || accion.selector || accion.contexto || accion.texto))
+    .filter(Boolean));
+  const idsAnteriores = new Set((productosAnteriores || []).map((producto) => producto?.id).filter(Boolean));
+
+  const candidatosSinGrabados = productos.filter((producto) => !idsGrabados.has(producto.id));
+  const candidatosSinAnterior = candidatosSinGrabados.filter((producto) => !idsAnteriores.has(producto.id));
+  const candidatos = candidatosSinAnterior.length ? candidatosSinAnterior : candidatosSinGrabados;
+  const fuente = candidatos.length ? candidatos : productos;
+  const inicio = Math.abs(seed + 23) % fuente.length;
+  const rotados = fuente.slice(inicio).concat(fuente.slice(0, inicio));
+  return rotados.slice(0, Math.max(1, accionesProducto.length));
+}
+
+function productosConocidos() {
+  return [
+    { id: "sauce-labs-backpack", nombre: "Sauce Labs Backpack", precio: "29.99" },
+    { id: "sauce-labs-bike-light", nombre: "Sauce Labs Bike Light", precio: "9.99" },
+    { id: "sauce-labs-bolt-t-shirt", nombre: "Sauce Labs Bolt T-Shirt", precio: "15.99" },
+    { id: "sauce-labs-fleece-jacket", nombre: "Sauce Labs Fleece Jacket", precio: "49.99" },
+    { id: "sauce-labs-onesie", nombre: "Sauce Labs Onesie", precio: "7.99" },
+    { id: "test.allthethings-t-shirt-red", nombre: "Test.allTheThings() T-Shirt (Red)", precio: "15.99" },
+  ].map((producto) => ({
+    ...producto,
+    selector: `[data-test="add-to-cart-${producto.id}"]`,
+  }));
+}
+
+function normalizarProductoId(valor) {
+  const texto = normalizarTextoComparacion(valor)
+    .replace(/^#/, "")
+    .replace(/_/g, "-")
+    .replace(/\s+/g, "-");
+
+  const match = texto.match(/(?:add-to-cart-)?((?:sauce-labs|test\.allthethings|test-allthethings)[a-z0-9.-]*)/);
+  return match ? match[1].replace(/^add-to-cart-/, "") : "";
+}
+
+function elegirPorSeed(lista, seed) {
+  if (!Array.isArray(lista) || !lista.length) return null;
+  return lista[Math.abs(seed) % lista.length];
+}
+
+function elegirDistintoPorSeed(lista, seed, anterior) {
+  if (!Array.isArray(lista) || !lista.length) return null;
+  const candidatos = lista.filter((item) => String(item) !== String(anterior || ""));
+  return elegirPorSeed(candidatos.length ? candidatos : lista, seed);
 }
 
 function contieneCampo(texto, opciones) {

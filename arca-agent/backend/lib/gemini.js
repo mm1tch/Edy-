@@ -13,6 +13,8 @@ export async function aprenderMapeoConGemini(input) {
   }
 
   const model = process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
+  console.log("[Gemini] Modelo utilizado:", model);
+  console.log("[Gemini] Viene de .env:", Boolean(process.env.GEMINI_MODEL));
   const url =
     "https://generativelanguage.googleapis.com/v1beta/models/" +
     encodeURIComponent(model) +
@@ -59,6 +61,7 @@ function crearPromptMapeo(acciones) {
     "No inventes acciones ni botones que no aparezcan en las acciones grabadas.",
     "Si la pagina contiene botones alternativos como Cancelar, Regresar o Eliminar, incluyelos SOLO si el usuario realmente hizo click en ellos durante la grabacion.",
     "Cada paso ejecutable debe venir de una accion grabada. Usa los botones visibles solo como contexto, no como instrucciones nuevas.",
+    "Tambien devuelve datos_sugeridos: un objeto selector -> valor nuevo, generando valores realistas y distintos a los grabados para todos los campos de texto capturados (nombre, apellido, direccion, codigo postal, telefono, correo, cantidad, etc). Usa el selector exacto que aparece en cada paso como llave.",
     "Responde SOLO JSON valido, sin markdown, sin explicaciones.",
     "La estructura exacta debe ser:",
     JSON.stringify({
@@ -84,6 +87,11 @@ function crearPromptMapeo(acciones) {
         cliente_id: "12345",
         sku: ["SKU-1"],
         cantidad: [10],
+      },
+      datos_sugeridos: {
+        "#first-name": "Maria",
+        "#last-name": "Lopez",
+        "#postal-code": "64000",
       },
     }),
     "Acciones grabadas:",

@@ -38,6 +38,18 @@
     chrome.storage.local.get(keys, res);
   });
 
+  // Re-renders the step checklist from the learned mapeo. Needed every time the
+  // widget appears mid-execution on a freshly-loaded page — content_script.js
+  // (and its DOM) is re-injected on every navigation, so the list rendered by
+  // onEjecutar/onReejecutar is gone and "paso_actual"/"paso_completado" would
+  // otherwise have no matching element to mark with a check.
+  async function renderPasosEnEjecucion(mensajeVacio) {
+    const storage = await getLocal(['mapeo_aprendido']);
+    const mapeo   = storage['mapeo_aprendido'];
+    const pasos   = (mapeo?.pasos || []).map(p => p.nombre).filter(Boolean);
+    widget.renderPasos(pasos.length ? pasos : [mensajeVacio]);
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // RECORDING — all event capture lives here, not in an injected script
   // ─────────────────────────────────────────────────────────────────────────────
@@ -475,19 +487,13 @@
   });
 
   widget.onEjecutar(async () => {
-    const storage = await getLocal(['mapeo_aprendido']);
-    const mapeo   = storage['mapeo_aprendido'];
-    const pasos   = (mapeo?.pasos || []).map(p => p.nombre).filter(Boolean);
-    widget.renderPasos(pasos.length ? pasos : ['Iniciando automatización…']);
+    await renderPasosEnEjecucion('Iniciando automatización…');
     widget.mostrarEstado('ejecutando');
     sendMsg({ tipo: 'iniciar_ejecucion' });
   });
 
   widget.onReejecutar(async () => {
-    const storage = await getLocal(['mapeo_aprendido']);
-    const mapeo   = storage['mapeo_aprendido'];
-    const pasos   = (mapeo?.pasos || []).map(p => p.nombre).filter(Boolean);
-    widget.renderPasos(pasos.length ? pasos : ['Reiniciando automatización…']);
+    await renderPasosEnEjecucion('Reiniciando automatización…');
     widget.mostrarEstado('ejecutando');
     sendMsg({ tipo: 'volver_a_ejecutar' });
   });
@@ -545,7 +551,7 @@
           iniciarRecording();
         } else if (msg.estado === 'ejecutando') {
           wasExecuting = true;
-          widget.mostrarEstado('ejecutando');
+          renderPasosEnEjecucion('Ejecutando automatización…').then(() => widget.mostrarEstado('ejecutando'));
         } else {
           if (wasExecuting) {
             wasExecuting = false;
@@ -595,7 +601,7 @@
         iniciarRecording();
       } else if (resp.estado === 'ejecutando') {
         wasExecuting = true;
-        widget.mostrarEstado('ejecutando');
+        renderPasosEnEjecucion('Ejecutando automatización…').then(() => widget.mostrarEstado('ejecutando'));
       } else if ((resp.totalAcciones || 0) > 0) {
         widget.setResumenAprendido(resp.totalAcciones + ' acciones · listo para ejecutar');
         widget.mostrarEstado('aprendido');
