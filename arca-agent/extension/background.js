@@ -160,6 +160,18 @@ function registrarAccion(accion, tabId) {
   if (estado !== "observando") return;
 
   const normalizada = normalizarAccion(accion, tabId);
+  const indexExistente = accionesGrabadas.findIndex((a) => accionesSonMismoCampoEditable(a, normalizada));
+
+  if (indexExistente !== -1) {
+    accionesGrabadas[indexExistente] = {
+      ...accionesGrabadas[indexExistente],
+      ...normalizada,
+      id: accionesGrabadas[indexExistente].id || normalizada.id,
+    };
+    guardarLocal({ [STORAGE_KEYS.acciones]: accionesGrabadas });
+    return;
+  }
+
   if (accionesGrabadas.some((a) => firmaAccion(a) === firmaAccion(normalizada))) return;
 
   accionesGrabadas.push(normalizada);
@@ -564,9 +576,39 @@ function esperarTabCargada(tabId, timeout = 15000) {
 
 // ─── Recorder injection / retrieval ──────────────────────────────────────────
 async function enviarAAppsScript(payload, appsScriptUrl) {
-  const url = appsScriptUrl || (await obtenerPedidosBackendUrl());
-  if (!url) return null;
+  const urls = [
+    await obtenerPedidosBackendUrl(),
+    appsScriptUrl,
+  ].filter(Boolean);
 
+  if (!urls.length) return null;
+
+  const errores = [];
+
+  for (const url of urls) {
+    try {
+      const respuesta = await enviarPedidoAUrl(payload, url);
+
+      await guardarLocal({
+        [STORAGE_KEYS.ultimoEnvioSheets]: {
+          ok: true,
+          url,
+          respuesta,
+          fecha: new Date().toISOString(),
+        },
+      });
+
+      return respuesta;
+    } catch (error) {
+      errores.push({ url, error: error.message });
+      console.warn("[Edy] Fallo enviando pedido:", url, error.message);
+    }
+  }
+
+  throw new Error("No se pudo guardar el pedido: " + errores.map((e) => e.error).join(" | "));
+}
+
+async function enviarPedidoAUrl(payload, url) {
   const respuesta = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -589,15 +631,6 @@ async function enviarAAppsScript(payload, appsScriptUrl) {
   if (json && json.ok === false) {
     throw new Error(json.error || "Apps Script respondio ok=false.");
   }
-
-  await guardarLocal({
-    [STORAGE_KEYS.ultimoEnvioSheets]: {
-      ok: true,
-      url,
-      respuesta: json,
-      fecha: new Date().toISOString(),
-    },
-  });
 
   return json;
 }
@@ -845,12 +878,33 @@ function unirAcciones(base, nuevas) {
   const resultado = normalizarAcciones(base);
   const firmas = new Set(resultado.map(firmaAccion));
   for (const a of normalizarAcciones(nuevas)) {
+    const indexExistente = resultado.findIndex((existente) => accionesSonMismoCampoEditable(existente, a));
+    if (indexExistente !== -1) {
+      resultado[indexExistente] = {
+        ...resultado[indexExistente],
+        ...a,
+        id: resultado[indexExistente].id || a.id,
+      };
+      continue;
+    }
+
     const f = firmaAccion(a);
     if (firmas.has(f)) continue;
     firmas.add(f);
     resultado.push(a);
   }
   return resultado;
+}
+
+function accionesSonMismoCampoEditable(a, b) {
+  const tipoA = normalizarTipoAccion(a?.tipo);
+  const tipoB = normalizarTipoAccion(b?.tipo);
+  const editableA = tipoA === "input" || tipoA === "change";
+  const editableB = tipoB === "input" || tipoB === "change";
+  if (!editableA || !editableB) return false;
+
+  return normalizarTextoComparacion(a?.selector) === normalizarTextoComparacion(b?.selector) &&
+    normalizarTextoComparacion(a?.url) === normalizarTextoComparacion(b?.url);
 }
 
 function firmaAccion(a) {
