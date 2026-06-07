@@ -106,9 +106,13 @@
   }
 
   function registrarAccion(tipo, el) {
-    if (!el || el.closest?.('#edy-agent-host')) return;
+    if (!el) { console.log('[Edy] registrarAccion: dropped — el is null'); return; }
+    if (el.closest?.('#edy-agent-host')) { console.log('[Edy] registrarAccion: dropped — widget host'); return; }
     const sel = selectorPara(el);
-    if (!sel) return;
+    if (!sel) {
+      console.log('[Edy] registrarAccion: dropped — no selector for', el.tagName, el.id || el.className || '(no id/class)');
+      return;
+    }
 
     const accion = {
       id:          Date.now() + '-' + Math.random().toString(36).slice(2),
@@ -124,28 +128,38 @@
     };
 
     recordedActions.push(accion);
+    console.log('[Edy] accion registrada ✓', tipo, sel, accion.texto.slice(0, 30) || '', '| contexto:', accion.contexto.slice(0, 30) || '(none)');
     sendMsg({ tipo: 'accion_grabada', accion });
   }
 
   function iniciarRecording() {
-    if (recorderHandlers) return; // already active
+    if (recorderHandlers) {
+      console.log('[Edy] iniciarRecording: already active, skipping');
+      return;
+    }
     isRecording = true;
     recordedActions = [];
+    console.log('[Edy] iniciarRecording: listeners attached — grabando en', location.href);
 
     const onClick = (e) => {
-      if (!isRecording) return;
+      console.log('[Edy] onClick RAW:', e.target.tagName, '| isRecording:', isRecording, '| id:', e.target.id || '(none)');
+      if (!isRecording) { console.log('[Edy] onClick: skipped — not recording'); return; }
       const tag  = (e.target.tagName || '').toLowerCase();
       const type = (e.target.type   || '').toLowerCase();
-      // skip text inputs — the input event captures those more precisely
-      if ((tag === 'input' && TEXT_INPUTS.has(type)) || tag === 'textarea') return;
-      // bubble up to the nearest interactive ancestor so we capture the button, not a child <span>
-      const el = e.target.closest(INTERACTIVE) || e.target;
-      console.log('[Edy] click captured:', el.tagName, el.id || el.getAttribute('data-test') || el.textContent?.trim().slice(0, 30));
+      if ((tag === 'input' && TEXT_INPUTS.has(type)) || tag === 'textarea') {
+        console.log('[Edy] onClick: skipped — text input (captured by onInput instead)');
+        return;
+      }
+      let el;
+      try { el = e.target.closest(INTERACTIVE) || e.target; }
+      catch (err) { el = e.target; console.warn('[Edy] closest() failed:', err); }
+      console.log('[Edy] click capturado →', el.tagName, '#' + (el.id || '?'), el.getAttribute('data-test') || el.textContent?.trim().slice(0, 30) || '');
       registrarAccion('click', el);
     };
 
     const onInput = (e) => {
       if (!isRecording) return;
+      console.log('[Edy] onInput:', e.target.tagName, e.target.name || e.target.id || e.target.placeholder || '');
       registrarAccion('input', e.target);
     };
 
@@ -154,12 +168,14 @@
       const tag  = e.target.tagName?.toLowerCase();
       const type = (e.target.type || '').toLowerCase();
       if (tag === 'select' || type === 'checkbox' || type === 'radio') {
+        console.log('[Edy] onChange:', tag, e.target.name || e.target.id || '');
         registrarAccion('change', e.target);
       }
     };
 
     const onSubmit = (e) => {
       if (!isRecording) return;
+      console.log('[Edy] onSubmit:', e.target.id || e.target.action || '');
       registrarAccion('submit', e.target);
     };
 
@@ -180,15 +196,19 @@
     recorderHandlers = null;
     const result = recordedActions;
     recordedActions = [];
+    console.log('[Edy] detenerRecording:', result.length, 'acciones grabadas');
     return result;
   }
 
   // Start recording immediately on page load by checking storage directly.
   // This avoids the background roundtrip race: clicks on a new page happen before
   // content_script_listo response arrives, causing early events to be missed.
-  chrome.storage.local.get('estado_agente', ({ estado_agente }) => {
-    if (estado_agente === 'observando') iniciarRecording();
-  });
+  if (isContextValid()) {
+    chrome.storage.local.get('estado_agente', ({ estado_agente }) => {
+      console.log('[Edy] storage check on load — estado_agente:', estado_agente);
+      if (estado_agente === 'observando') iniciarRecording();
+    });
+  }
 
   // ─────────────────────────────────────────────────────────────────────────────
   // SEMANTIC FIELD IDENTIFICATION  (used by background during execution)
@@ -317,21 +337,14 @@
   // ─────────────────────────────────────────────────────────────────────────────
 
   widget.onObservar(() => {
-    camposCapturados = 0;
     widget.resetObservando();
     widget.mostrarEstado('observando');
     sendMsg({ tipo: 'iniciar_grabacion' });
   });
 
   widget.onDetener(() => {
-    chrome.runtime.sendMessage({ tipo: "detener_grabacion" });
-    detenerGrabacion();
-    // Pasa al estado "aprendido": Edy ya sabe el proceso.
-    widget.setResumenAprendido(
-      camposCapturados + " campos · " + PASOS_EJECUCION.length + " pasos"
-    );
-    widget.mostrarEstado("aprendido");
-    widget.habilitarEjecutar(true);
+    sendMsg({ tipo: 'detener_grabacion' });
+    // UI will update when grabacion_detenida arrives from background
   });
 
   widget.onEjecutar(async () => {
@@ -344,28 +357,71 @@
   });
 
   widget.onDashboard(() => {
-    if (DASHBOARD_URL) {
-      chrome.runtime.sendMessage({ tipo: "abrir_dashboard", url: DASHBOARD_URL });
-    }
+    sendMsg({ tipo: 'abrir_dashboard' });
   });
 
   widget.onPausar(() => {
-    // Detener ejecución → vuelve al estado "aprendido" (Edy sigue sabiendo el proceso).
-    chrome.runtime.sendMessage({ tipo: "detener_ejecucion" });
-    widget.mostrarEstado("aprendido");
+    widget.mostrarEstado('aprendido');
   });
 
   widget.onNuevo(() => {
-    // Nuevo proceso → reinicia todo desde cero.
-    chrome.runtime.sendMessage({ tipo: "nuevo_proceso" });
+    // widget already switched to idle via btn-nuevo listener; nothing extra needed
   });
 
-  // ---------- Mensajes entrantes del background ----------
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (!msg || !msg.tipo) return;
+  // ─── Messages from background ────────────────────────────────────────────────
+  let wasExecuting = false;
+
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (!msg?.tipo) return;
+
     switch (msg.tipo) {
-      case "campo_detectado":
-        camposCapturados++;
+      case 'iniciar_grabacion_tab':
+        iniciarRecording();
+        sendResponse({ ok: true });
+        break;
+
+      case 'detener_grabacion_tab': {
+        const acciones = detenerRecording();
+        sendResponse({ ok: true, acciones });
+        break;
+      }
+
+      case 'grabacion_iniciada':
+        iniciarRecording();
+        widget.resetObservando();
+        widget.mostrarEstado('observando');
+        break;
+
+      case 'grabacion_detenida':
+        detenerRecording();
+        if ((msg.totalAcciones || 0) > 0) {
+          widget.setResumenAprendido(msg.totalAcciones + ' acciones · listo para ejecutar');
+          widget.mostrarEstado('aprendido');
+        } else {
+          widget.mostrarEstado('idle');
+        }
+        break;
+
+      case 'estado_agente':
+        if (msg.estado === 'observando') {
+          wasExecuting = false;
+          widget.mostrarEstado('observando');
+          iniciarRecording();
+        } else if (msg.estado === 'ejecutando') {
+          wasExecuting = true;
+          widget.mostrarEstado('ejecutando');
+        } else {
+          if (wasExecuting) {
+            wasExecuting = false;
+            widget.mostrarEstado('completado');
+          } else {
+            widget.mostrarEstado('idle');
+            detenerRecording();
+          }
+        }
+        break;
+
+      case 'campo_detectado':
         widget.agregarCampoDetectado(msg.nombre, msg.time);
         break;
 
@@ -375,9 +431,6 @@
 
       case 'paso_completado':
         widget.marcarPasoCompletado(msg.paso);
-        break;
-      case "flujo_completado":
-        widget.mostrarEstado("completado");
         break;
     }
   });
@@ -393,11 +446,14 @@
         widget.mostrarEstado('observando');
         iniciarRecording();
       } else if (resp.estado === 'ejecutando') {
+        wasExecuting = true;
         widget.mostrarEstado('ejecutando');
+      } else if ((resp.totalAcciones || 0) > 0) {
+        widget.setResumenAprendido(resp.totalAcciones + ' acciones · listo para ejecutar');
+        widget.mostrarEstado('aprendido');
       } else {
         widget.mostrarEstado('idle');
       }
-      if ((resp.totalAcciones || 0) > 0 && resp.estado === 'idle') widget.habilitarEjecutar(true);
     });
   }
 })();
