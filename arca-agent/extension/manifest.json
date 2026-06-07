@@ -5,7 +5,7 @@
   "description": "Agente IA que observa y automatiza procesos entre sistemas web",
   "permissions": ["activeTab", "scripting", "storage", "tabs"],
   "host_permissions": [
-    "https://api.anthropic.com/*",
+    "http://localhost:3000/*",
     "https://script.google.com/*",
     "<all_urls>"
   ],
