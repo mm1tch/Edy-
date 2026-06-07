@@ -1,118 +1,96 @@
-// apps_script.gs
-// Backend de Arca Agent en Google Apps Script.
-// Exponer como Web App: Implementar → Nueva implementación → Aplicación web
-//   Ejecutar como: Yo  |  Acceso: Cualquiera
-// Copiar la URL generada → pegarla en DASHBOARD_URL (content_script.js) y en dashboard.js
+// apps_script.gs — Edy: Google Apps Script backend
+// Deploy as Web App (Execute as: Me, Access: Anyone) and paste the URL into the extension.
 
-const SHEET_NAME = "Pedidos"; // nombre de la pestaña dentro del Sheets
+var HOJA_NOMBRE = "Pedidos";
+var COLUMNAS = ["timestamp", "portal", "ejecutado_por", "orden", "cliente", "skus", "importe", "estado", "tiempo_ahorrado", "datos_completos"];
 
-// ─────────────────────────────────────────────
-//  doPost — recibe un pedido desde background.js
-//  Body esperado (JSON): { portal, ...camposDinamicos }
-//  Ejemplo: { portal:"SAP VA01", cliente_id:"C-4821", skus:"X1,X2", monto:500 }
-// ─────────────────────────────────────────────
+// ─── POST: recibe un pedido de la extensión y lo guarda en Sheets ─────────────
+
 function doPost(e) {
   try {
-    const datos = JSON.parse(e.postData.contents);
-    datos.timestamp = new Date().toLocaleString("es-MX", { timeZone: "America/Monterrey" });
+    var raw = e.postData && e.postData.contents ? e.postData.contents : "{}";
+    var datos = JSON.parse(raw);
+    var hoja = obtenerHoja();
 
-    const sheet = obtenerHoja();
-    expandirColumnas(sheet, datos);
-    agregarFila(sheet, datos);
-
-    return respuestaOk({ mensaje: "guardado" });
-  } catch (err) {
-    return respuestaError(err.message);
-  }
-}
-
-// ─────────────────────────────────────────────
-//  doGet — devuelve todos los pedidos como JSON
-//  Lo consume dashboard.js
-// ─────────────────────────────────────────────
-function doGet() {
-  try {
-    const sheet = obtenerHoja();
-    const [encabezados, ...filas] = sheet.getDataRange().getValues();
-
-    const registros = filas.map(fila => {
-      const obj = {};
-      encabezados.forEach((col, i) => { obj[col] = fila[i]; });
-      return obj;
+    var fila = COLUMNAS.map(function(col) {
+      var val = datos[col];
+      if (val === undefined || val === null) return "";
+      if (typeof val === "object") return JSON.stringify(val);
+      return String(val);
     });
 
-    return respuestaOk(registros);
+    hoja.appendRow(fila);
+    SpreadsheetApp.flush();
+
+    return ContentService
+      .createTextOutput(JSON.stringify({ ok: true, mensaje: "Pedido guardado" }))
+      .setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
-    return respuestaError(err.message);
+    return ContentService
+      .createTextOutput(JSON.stringify({ ok: false, error: err.message }))
+      .setMimeType(ContentService.MimeType.JSON);
   }
 }
 
-// ─────────────────────────────────────────────
-//  Helpers internos
-// ─────────────────────────────────────────────
+// ─── GET: devuelve todos los pedidos en formato JSON para el dashboard ────────
 
-// Obtiene (o crea) la hoja de destino.
-// Si la hoja existe pero está vacía, inicializa el encabezado automáticamente.
-function obtenerHoja() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName(SHEET_NAME);
-  if (!sheet) {
-    sheet = ss.insertSheet(SHEET_NAME);
-  }
-  // Si la hoja está vacía (sin encabezado), lo crea solo
-  if (sheet.getLastColumn() === 0) {
-    const celda = sheet.getRange(1, 1);
-    celda.setValue("timestamp");
-    celda.setFontWeight("bold");
-  }
-  return sheet;
-}
+function doGet(e) {
+  try {
+    var hoja = obtenerHoja();
+    var filas = hoja.getDataRange().getValues();
 
-// Si el pedido trae llaves nuevas que no existen como columna, las agrega al final.
-// Así la tabla crece sola con cada portal distinto que aparezca.
-function expandirColumnas(sheet, datos) {
-  const encabezados = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  const llaves = Object.keys(datos);
-
-  llaves.forEach(llave => {
-    if (!encabezados.includes(llave)) {
-      const nuevaCol = sheet.getLastColumn() + 1;
-      const celda = sheet.getRange(1, nuevaCol);
-      celda.setValue(llave);
-      celda.setFontWeight("bold");
-      encabezados.push(llave); // actualiza el array local para la misma iteración
+    if (filas.length <= 1) {
+      return jsonResponse({ ok: true, data: [] });
     }
-  });
-}
 
-// Agrega una fila nueva respetando el orden actual de columnas.
-// Las columnas que el pedido no traiga quedan como "—".
-function agregarFila(sheet, datos) {
-  const encabezados = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  const fila = encabezados.map(col => (datos[col] !== undefined ? datos[col] : "—"));
-  sheet.appendRow(fila);
+    var encabezados = filas[0].map(function(h) { return String(h).toLowerCase(); });
+    var pedidos = [];
 
-  // Resalta la fila recién agregada con fondo suave para el efecto visual
-  const ultimaFila = sheet.getLastRow();
-  sheet.getRange(ultimaFila, 1, 1, encabezados.length)
-    .setBackground("#fff5f5"); // rojo muy suave (brand color)
+    for (var i = 1; i < filas.length; i++) {
+      var fila = filas[i];
+      var obj = {};
+      encabezados.forEach(function(col, idx) {
+        obj[col] = fila[idx];
+      });
 
-  // Quita el resaltado de la penúltima fila si existía
-  if (ultimaFila > 2) {
-    sheet.getRange(ultimaFila - 1, 1, 1, encabezados.length)
-      .setBackground(null);
+      // Normalizar para dashboard.js (espera estos campos)
+      pedidos.push({
+        orden:     obj.orden     || obj.cliente_id || ("EDY-" + i),
+        cliente:   obj.cliente   || obj.cliente_nombre || obj.portal || "—",
+        skus:      obj.skus      || obj.sku_producto  || "—",
+        importe:   obj.importe   || obj.monto         || "—",
+        hora:      obj.timestamp || obj.hora          || "",
+        estado:    obj.estado    || "Completada",
+        portal:    obj.portal    || "—",
+        ejecutado_por: obj.ejecutado_por || "Edy",
+        tiempo_ahorrado: obj.tiempo_ahorrado || "3.5",
+      });
+    }
+
+    return jsonResponse({ ok: true, data: pedidos });
+  } catch (err) {
+    return jsonResponse({ ok: false, error: err.message, data: [] });
   }
 }
 
-// Respuestas JSON con CORS abierto (necesario para fetch desde el dashboard)
-function respuestaOk(payload) {
-  return ContentService
-    .createTextOutput(JSON.stringify({ ok: true, data: payload }))
-    .setMimeType(ContentService.MimeType.JSON);
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function obtenerHoja() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var hoja = ss.getSheetByName(HOJA_NOMBRE);
+
+  if (!hoja) {
+    hoja = ss.insertSheet(HOJA_NOMBRE);
+    hoja.appendRow(COLUMNAS);
+    hoja.getRange(1, 1, 1, COLUMNAS.length).setFontWeight("bold").setBackground("#1a1a2e").setFontColor("#ffffff");
+    hoja.setFrozenRows(1);
+  }
+
+  return hoja;
 }
 
-function respuestaError(mensaje) {
+function jsonResponse(data) {
   return ContentService
-    .createTextOutput(JSON.stringify({ ok: false, error: mensaje }))
+    .createTextOutput(JSON.stringify(data))
     .setMimeType(ContentService.MimeType.JSON);
 }

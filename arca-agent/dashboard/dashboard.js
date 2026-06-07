@@ -1,6 +1,5 @@
-// dashboard.js
-// Consume el doGet() del Apps Script y pinta el dashboard.
-// Pegar aquí la URL del Web App después de desplegarlo en Google Apps Script.
+// dashboard.js — Edy: Dashboard de pedidos automatizados
+// Consume datos desde Google Apps Script (doGet) y auto-refresca cada 3s.
 
 const WEB_APP_URL =
   "https://script.google.com/macros/s/AKfycbwZIds6wFjyqLf33nPOvS5SJ86YR0Z932lSS-iz80-ll8p3lgVydJQpjbamSfC1N1uM7w/exec";

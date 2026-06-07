@@ -100,28 +100,19 @@ const server = http.createServer(async (req, res) => {
       const payload = await readJsonBody(req);
 
       if (payload.tipo !== "aprender_mapeo") {
-        sendJson(res, 400, {
-          ok: false,
-          error: "tipo debe ser aprender_mapeo",
-        });
+        sendJson(res, 400, { ok: false, error: "tipo debe ser aprender_mapeo" });
         return;
       }
 
-      const mapeo = await aprenderMapeoConGemini(payload.acciones || []);
+      const mapeo = await aprenderMapeoConGemini(payload);
       sendJson(res, 200, { ok: true, mapeo });
       return;
     }
 
-    sendJson(res, 404, {
-      ok: false,
-      error: "Ruta no encontrada",
-    });
+    sendJson(res, 404, { ok: false, error: "Ruta no encontrada" });
   } catch (error) {
     console.error("[arca-agent-backend]", error);
-    sendJson(res, 500, {
-      ok: false,
-      error: error.message,
-    });
+    sendJson(res, 500, { ok: false, error: error.message });
   }
 });
 
@@ -135,32 +126,23 @@ server.listen(PORT, () => {
 
 function loadEnv(envPath) {
   if (!fs.existsSync(envPath)) return;
-
   const lines = fs.readFileSync(envPath, "utf8").split(/\r?\n/);
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
-
     const equalsIndex = trimmed.indexOf("=");
     if (equalsIndex === -1) continue;
-
     const key = trimmed.slice(0, equalsIndex).trim();
     const value = trimmed.slice(equalsIndex + 1).trim().replace(/^["']|["']$/g, "");
-
     if (!process.env[key]) process.env[key] = value;
   }
 }
 
 async function readJsonBody(req) {
   const chunks = [];
-
-  for await (const chunk of req) {
-    chunks.push(chunk);
-  }
-
+  for await (const chunk of req) chunks.push(chunk);
   const raw = Buffer.concat(chunks).toString("utf8");
   if (!raw) return {};
-
   return JSON.parse(raw);
 }
 

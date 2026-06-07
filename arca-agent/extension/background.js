@@ -1,35 +1,36 @@
-// background.js
-// Cerebro de Edy: coordina la grabacion, aprendizaje via backend y ejecucion.
+// background.js — Edy v3
+// Flow: observe user placing an order on any supplier portal (System A)
+//       → Gemini learns the navigation playbook
+//       → Edy replicates the full order autonomously
+//       → Order data is posted to Google Sheets (System B) → dashboard
 
 const ICONOS = {
-  idle: "icons/EdyNeutro.png",
-  pensando: "icons/EdyPensando.png",
-  completado: "icons/EdySonriente.png",
+  idle:      "icons/EdyNeutro.png",
+  pensando:  "icons/EdyPensando.png",
+  completado:"icons/EdySonriente.png",
 };
 
-const PASOS_EJECUCION = [
-  "Abrir SAP / modulo VA01",
-  "Capturar cliente_id",
-  "Capturar 6 SKUs",
-  "Validar inventario...",
-  "Confirmar pedido",
-];
-
-const DEFAULT_GEMINI_BACKEND_URL = "http://localhost:3000/api/aprender-mapeo";
+const DEFAULT_BACKEND_URL = "http://localhost:3000/api/aprender-mapeo";
 
 const STORAGE_KEYS = {
-  estado: "estado_agente",
-  acciones: "acciones_grabadas",
-  mapeo: "mapeo_aprendido",
-  geminiBackendUrl: "geminiBackendUrl",
-  appsScriptUrl: "appsScriptUrl",
+  estado:       "estado_agente",
+  acciones:     "acciones_grabadas",
+  mapeo:        "mapeo_aprendido",
+  backendUrl:   "geminiBackendUrl",
+  appsScriptUrl:"appsScriptUrl",
   ultimoPedido: "ultimo_pedido",
-  tabGrabandoId: "tab_grabando_id",
+  originTabId:  "origin_tab_id",
+  originUrl:    "origin_url",
+  originSnapshot:"origin_snapshot",
 };
 
-let estado = "idle";
-let tabGrabandoId = null;
+let estado          = "idle";
+let originTabId     = null;
+let originUrl       = null;
 let accionesGrabadas = [];
+let originSnapshot  = [];
+
+// ─── Lifecycle ────────────────────────────────────────────────────────────────
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.action.setIcon({ path: ICONOS.idle });
@@ -37,84 +38,82 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status !== "complete") return;
-
-  sincronizarTabDespuesDeNavegacion(tabId).catch((error) => {
-    console.error("[Edy background] No se pudo sincronizar la pestana", error);
-  });
+  sincronizarTabDespuesDeNavegacion(tabId).catch(() => {});
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (!msg || !msg.tipo) return false;
-
+  if (!msg?.tipo) return false;
   manejarMensaje(msg, sender)
-    .then((respuesta) => sendResponse(respuesta || { ok: true }))
-    .catch((error) => {
-      console.error("[Edy background]", error);
-      sendResponse({ ok: false, error: error.message });
+    .then((resp) => sendResponse(resp || { ok: true }))
+    .catch((err) => {
+      console.error("[Edy]", err);
+      sendResponse({ ok: false, error: err.message });
     });
-
   return true;
 });
+
+// ─── Message router ───────────────────────────────────────────────────────────
 
 async function manejarMensaje(msg, sender) {
   switch (msg.tipo) {
     case "content_script_listo":
       return sincronizarContentScript(sender.tab?.id);
-
     case "iniciar_grabacion":
       return iniciarGrabacion(sender.tab?.id);
-
     case "accion_grabada":
       await cargarEstadoPersistido();
       registrarAccion(msg.accion, sender.tab?.id);
       return { ok: true };
-
-    case "acciones_grabadas":
-      accionesGrabadas = normalizarAcciones(msg.acciones);
-      await guardarLocal({ [STORAGE_KEYS.acciones]: accionesGrabadas });
-      await aprenderMapeoConBackend(accionesGrabadas);
-      return { ok: true, total: accionesGrabadas.length };
-
     case "detener_grabacion":
       return detenerGrabacion(sender.tab?.id);
-
     case "iniciar_ejecucion":
       return iniciarEjecucion(sender.tab?.id);
-
     case "abrir_dashboard":
       if (msg.url) await chrome.tabs.create({ url: msg.url });
       return { ok: true };
-
     case "configurar_gemini_backend":
     case "configurar_backend_gemini":
-      await guardarLocal({ [STORAGE_KEYS.geminiBackendUrl]: msg.url || "" });
+      await guardarLocal({ [STORAGE_KEYS.backendUrl]: msg.url || "" });
       return { ok: true };
-
     case "configurar_apps_script":
       await guardarLocal({ [STORAGE_KEYS.appsScriptUrl]: msg.url || "" });
       return { ok: true };
-
     default:
-      return { ok: false, error: "Tipo de mensaje no soportado: " + msg.tipo };
+      return { ok: false, error: "Tipo desconocido: " + msg.tipo };
   }
 }
 
+// ─── Recording ────────────────────────────────────────────────────────────────
+
 async function iniciarGrabacion(tabId) {
   const targetTabId = tabId || (await obtenerTabActiva())?.id;
-  if (!targetTabId) throw new Error("No hay una pestana activa para grabar.");
+  if (!targetTabId) throw new Error("No hay pestaña activa.");
 
-  estado = "observando";
-  tabGrabandoId = targetTabId;
+  estado           = "observando";
+  originTabId      = targetTabId;
   accionesGrabadas = [];
+  originSnapshot   = [];
+
+  const tab = await chrome.tabs.get(targetTabId).catch(() => null);
+  originUrl = tab?.url || null;
 
   await chrome.action.setIcon({ path: ICONOS.pensando });
   await guardarLocal({
-    [STORAGE_KEYS.estado]: estado,
-    [STORAGE_KEYS.acciones]: [],
-    [STORAGE_KEYS.mapeo]: null,
-    [STORAGE_KEYS.tabGrabandoId]: tabGrabandoId,
+    [STORAGE_KEYS.estado]:         estado,
+    [STORAGE_KEYS.acciones]:       [],
+    [STORAGE_KEYS.mapeo]:          null,
+    [STORAGE_KEYS.originTabId]:    originTabId,
+    [STORAGE_KEYS.originUrl]:      originUrl,
+    [STORAGE_KEYS.originSnapshot]: [],
   });
-  await inyectarGrabador(targetTabId);
+
+  // Tell the content script on that tab to start recording.
+  // content_script.js owns the event listeners — no executeScript injection needed.
+  await chrome.tabs.sendMessage(targetTabId, { tipo: "iniciar_grabacion_tab" }).catch(() => {});
+
+  originSnapshot = await capturarSnapshotPagina(targetTabId).catch(() => []);
+  await guardarLocal({ [STORAGE_KEYS.originSnapshot]: originSnapshot });
+
   await enviarATodos({ tipo: "estado_agente", estado, totalAcciones: 0 });
   await enviarATodos({ tipo: "grabacion_iniciada" });
 
@@ -123,186 +122,333 @@ async function iniciarGrabacion(tabId) {
 
 async function detenerGrabacion(tabId) {
   await cargarEstadoPersistido();
-  const targetTabId = tabGrabandoId || tabId || (await obtenerTabActiva())?.id;
 
+  const targetTabId = originTabId || tabId || (await obtenerTabActiva())?.id;
   if (targetTabId) {
-    const accionesDePagina = await obtenerAccionesDelGrabador(targetTabId);
-    accionesGrabadas = unirAcciones(accionesGrabadas, accionesDePagina);
-    await detenerGrabador(targetTabId);
+    // Ask content script for any locally-buffered actions (catches edge cases)
+    const resp = await chrome.tabs.sendMessage(targetTabId, { tipo: "detener_grabacion_tab" }).catch(() => null);
+    if (resp?.acciones?.length) {
+      accionesGrabadas = unirAcciones(accionesGrabadas, resp.acciones);
+    }
   }
 
   estado = "idle";
-  tabGrabandoId = null;
-
   await chrome.action.setIcon({ path: ICONOS.idle });
   await guardarLocal({
-    [STORAGE_KEYS.estado]: estado,
-    [STORAGE_KEYS.tabGrabandoId]: null,
+    [STORAGE_KEYS.estado]:   estado,
     [STORAGE_KEYS.acciones]: accionesGrabadas,
   });
 
   let mapeo = null;
   if (accionesGrabadas.length) {
-    mapeo = await aprenderMapeoConBackend(accionesGrabadas);
+    mapeo = await aprenderMapeoConBackend(accionesGrabadas).catch((err) => {
+      console.warn("[Edy] Backend falló, usando inferencia local:", err.message);
+      return inferirMapeoLocal(accionesGrabadas);
+    });
   }
 
-  await enviarATodos({
-    tipo: "estado_agente",
-    estado,
-    totalAcciones: accionesGrabadas.length,
-  });
-  await enviarATodos({
-    tipo: "grabacion_detenida",
-    totalAcciones: accionesGrabadas.length,
-    mapeo,
-  });
+  await enviarATodos({ tipo: "estado_agente", estado, totalAcciones: accionesGrabadas.length });
+  await enviarATodos({ tipo: "grabacion_detenida", totalAcciones: accionesGrabadas.length, mapeo });
 
   return { ok: true, totalAcciones: accionesGrabadas.length, mapeo };
 }
 
 function registrarAccion(accion, tabId) {
-  const accionNormalizada = normalizarAccion(accion, tabId);
   if (estado !== "observando") return;
 
-  if (accionesGrabadas.some((item) => firmaAccion(item) === firmaAccion(accionNormalizada))) {
-    return;
-  }
+  const normalizada = normalizarAccion(accion, tabId);
+  if (accionesGrabadas.some((a) => firmaAccion(a) === firmaAccion(normalizada))) return;
 
-  accionesGrabadas.push(accionNormalizada);
+  accionesGrabadas.push(normalizada);
   guardarLocal({ [STORAGE_KEYS.acciones]: accionesGrabadas });
 
-  if (accionNormalizada.nombreCampo) {
+  if (normalizada.nombreCampo) {
     enviarATodos({
       tipo: "campo_detectado",
-      nombre: accionNormalizada.nombreCampo,
-      time: formatearHora(accionNormalizada.timestamp),
+      nombre: normalizada.nombreCampo,
+      time: formatearHora(normalizada.timestamp),
     });
   }
 }
 
+// ─── AI learning ──────────────────────────────────────────────────────────────
+
 async function aprenderMapeoConBackend(acciones) {
-  const { [STORAGE_KEYS.geminiBackendUrl]: storedBackendUrl } = await chrome.storage.local.get(
-    STORAGE_KEYS.geminiBackendUrl
-  );
-  const backendUrl = storedBackendUrl || DEFAULT_GEMINI_BACKEND_URL;
+  const storage = await chrome.storage.local.get([
+    STORAGE_KEYS.backendUrl,
+    STORAGE_KEYS.originUrl,
+    STORAGE_KEYS.originSnapshot,
+  ]);
 
-  if (!backendUrl) {
-    const mapeoFallback = inferirMapeoLocal(acciones);
-    await guardarLocal({ [STORAGE_KEYS.mapeo]: mapeoFallback });
-    return mapeoFallback;
-  }
+  const backendUrl = storage[STORAGE_KEYS.backendUrl] || DEFAULT_BACKEND_URL;
 
-  const respuesta = await fetch(backendUrl, {
-    method: "POST",
+  const payload = {
+    tipo:            "aprender_mapeo",
+    agente:          "edy",
+    version:         3,
+    url_origen:      storage[STORAGE_KEYS.originUrl] || originUrl || "",
+    snapshot_origen: storage[STORAGE_KEYS.originSnapshot] || originSnapshot || [],
+    acciones,
+  };
+
+  const resp = await fetch(backendUrl, {
+    method:  "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      tipo: "aprender_mapeo",
-      agente: "edy",
-      version: 1,
-      acciones,
-      formato_esperado: {
-        campos: [
-          {
-            nombre_semantico: "cliente_id",
-            selector: "...",
-            evidencia: "...",
-          },
-        ],
-        pasos: [
-          {
-            nombre: "Capturar cliente_id",
-            accion: "input",
-            selector: "...",
-            valor: "...",
-          },
-        ],
-        datos_pedido: {},
-      },
-    }),
+    body:    JSON.stringify(payload),
   });
 
-  if (!respuesta.ok) {
-    const texto = await respuesta.text();
-    throw new Error("Backend Gemini respondio " + respuesta.status + ": " + texto);
-  }
+  if (!resp.ok) throw new Error("Backend respondió " + resp.status + ": " + await resp.text());
 
-  const data = await respuesta.json();
+  const data  = await resp.json();
   const mapeo = data.mapeo || data;
 
   await guardarLocal({ [STORAGE_KEYS.mapeo]: mapeo });
   return mapeo;
 }
 
-async function iniciarEjecucion(tabId) {
+// ─── Execution ────────────────────────────────────────────────────────────────
+
+async function iniciarEjecucion(callerTabId) {
   await cargarEstadoPersistido();
-  const targetTabId = tabId || tabGrabandoId || (await obtenerTabActiva())?.id;
-  if (!targetTabId) throw new Error("No hay una pestana activa para ejecutar.");
 
   const storage = await chrome.storage.local.get([
     STORAGE_KEYS.acciones,
     STORAGE_KEYS.mapeo,
     STORAGE_KEYS.appsScriptUrl,
+    STORAGE_KEYS.originUrl,
   ]);
 
+  const mapeo   = storage[STORAGE_KEYS.mapeo];
   const acciones = normalizarAcciones(storage[STORAGE_KEYS.acciones] || accionesGrabadas);
-  if (!acciones.length) throw new Error("No hay acciones grabadas para ejecutar.");
+
+  if (!mapeo && !acciones.length) {
+    throw new Error("Sin mapeo ni acciones. Observa el proceso primero.");
+  }
 
   estado = "ejecutando";
   await chrome.action.setIcon({ path: ICONOS.pensando });
-  await guardarLocal({ [STORAGE_KEYS.estado]: estado, [STORAGE_KEYS.tabGrabandoId]: targetTabId });
-  await enviarATodos({ tipo: "estado_agente", estado, totalAcciones: acciones.length });
+  await guardarLocal({ [STORAGE_KEYS.estado]: estado });
 
-  const plan = construirPlanEjecucion(acciones, storage[STORAGE_KEYS.mapeo]);
+  const plan = construirPlanEjecucion(mapeo, acciones);
+  await enviarATodos({ tipo: "estado_agente", estado, totalAcciones: plan.length });
 
-  for (let i = 0; i < plan.length; i += 1) {
-    const paso = plan[i];
-    await enviarATodos({ tipo: "paso_actual", paso: paso.nombre });
-    await ejecutarAccionEnTab(targetTabId, paso.accion);
-    await esperar(350);
-    await enviarATodos({ tipo: "paso_completado", paso: paso.nombre });
+  // Navigate to the supplier portal and start fresh
+  const portalUrl = mapeo?.portal_url || storage[STORAGE_KEYS.originUrl];
+  let tabId;
+
+  if (portalUrl) {
+    tabId = await encontrarOAbrirTab(portalUrl);
+    await esperar(1000);
+  } else {
+    tabId = callerTabId || (await obtenerTabActiva())?.id;
   }
 
+  if (!tabId) throw new Error("No se encontró el portal proveedor.");
+
+  // Execute each step, accumulating order data along the way
+  let datosRecopilados = {};
+  const camposConfirmacion = mapeo?.campos_confirmacion || [];
+
+  for (const paso of plan) {
+    await enviarATodos({ tipo: "paso_actual", paso: paso.nombre });
+
+    await ejecutarPasoConNavegacion(tabId, paso.acciones);
+
+    // Scrape after each step — captures data wherever it appears
+    if (camposConfirmacion.length) {
+      const datosPaso = await scrapeConfirmacion(tabId, camposConfirmacion);
+      for (const [key, val] of Object.entries(datosPaso)) {
+        if (val && !datosRecopilados[key]) datosRecopilados[key] = val;
+      }
+    }
+
+    await enviarATodos({ tipo: "paso_completado", paso: paso.nombre });
+    await esperar(200);
+  }
+
+  // Build and send order record to Google Sheets
+  const portalHostname = portalUrl ? new URL(portalUrl).hostname : "desconocido";
   const payload = {
-    fecha: new Date().toISOString(),
-    total_acciones: acciones.length,
-    mapeo: storage[STORAGE_KEYS.mapeo] || null,
-    acciones,
+    timestamp:          new Date().toISOString(),
+    portal:             portalHostname,
+    ejecutado_por:      "Edy",
+    orden:              datosRecopilados.orden_id || "EDY-" + Date.now().toString().slice(-6),
+    cliente:            datosRecopilados.cliente  || portalHostname,
+    skus:               datosRecopilados.productos_ordenados || datosRecopilados.productos || "—",
+    importe:            datosRecopilados.total    || datosRecopilados.subtotal || "—",
+    estado:             "Completada",
+    tiempo_ahorrado:    3.5,
+    datos_completos:    JSON.stringify(datosRecopilados),
   };
 
   await guardarLocal({ [STORAGE_KEYS.ultimoPedido]: payload });
-  await enviarAAppsScript(payload, storage[STORAGE_KEYS.appsScriptUrl]);
+  await enviarAAppsScript(payload, storage[STORAGE_KEYS.appsScriptUrl]).catch((err) =>
+    console.warn("[Edy] Apps Script:", err.message)
+  );
 
   estado = "idle";
-  tabGrabandoId = null;
-  await guardarLocal({ [STORAGE_KEYS.estado]: estado, [STORAGE_KEYS.tabGrabandoId]: null });
+  await guardarLocal({ [STORAGE_KEYS.estado]: estado });
   await chrome.action.setIcon({ path: ICONOS.completado });
-  await enviarATodos({ tipo: "estado_agente", estado, totalAcciones: acciones.length });
+  await enviarATodos({ tipo: "estado_agente", estado, totalAcciones: plan.length });
   setTimeout(() => chrome.action.setIcon({ path: ICONOS.idle }), 1500);
 
   return { ok: true, totalPasos: plan.length };
 }
 
-function construirPlanEjecucion(acciones, mapeo) {
-  if (mapeo?.pasos?.length) {
-    return mapeo.pasos
-      .map((paso, index) => ({
-        nombre: paso.nombre || PASOS_EJECUCION[index] || "Paso " + (index + 1),
-        accion: {
-          ...(acciones[index] || {}),
-          tipo: paso.accion || paso.tipo || acciones[index]?.tipo || "input",
-          selector: paso.selector || acciones[index]?.selector || "",
-          valor: paso.valor ?? acciones[index]?.valor ?? "",
-        },
-      }))
-      .filter((paso) => paso.accion.selector);
-  }
+// Execute one step's actions, waiting for page navigation between clicks
+async function ejecutarPasoConNavegacion(tabId, acciones) {
+  for (const accion of acciones) {
+    await ejecutarAccionEnTab(tabId, accion);
 
-  return acciones.map((accion, index) => ({
-    nombre: PASOS_EJECUCION[index] || nombrePasoDesdeAccion(accion, index),
-    accion,
-  }));
+    if (accion.tipo === "click" || accion.tipo === "submit") {
+      await esperar(400);
+      const tab = await chrome.tabs.get(tabId).catch(() => null);
+      if (tab?.status === "loading") {
+        await esperarTabCargada(tabId);
+        await esperar(500); // settle after page load
+      }
+    } else {
+      await esperar(200);
+    }
+  }
 }
 
+// Scrape order data from whatever page is currently visible
+async function scrapeConfirmacion(tabId, campos) {
+  if (!campos?.length) return {};
+  const result = await chrome.scripting.executeScript({
+    target: { tabId },
+    args:   [campos],
+    func:   (campos) => {
+      const datos = {};
+      for (const campo of campos) {
+        try {
+          if (campo.multiple) {
+            const els = document.querySelectorAll(campo.selector);
+            const textos = Array.from(els).map((el) => el.innerText?.trim()).filter(Boolean);
+            if (textos.length) datos[campo.nombre] = textos.join(", ");
+          } else {
+            const el = document.querySelector(campo.selector);
+            if (el) {
+              const val = el.innerText?.trim() || el.value || "";
+              if (val) datos[campo.nombre] = val;
+            }
+          }
+        } catch (_) {}
+      }
+      return datos;
+    },
+  });
+  return result?.[0]?.result || {};
+}
+
+// Build execution plan — handles both new (nested acciones) and legacy (flat) formats
+function construirPlanEjecucion(mapeo, acciones) {
+  // New format: pasos[].acciones[] (nested)
+  if (mapeo?.pasos?.length && Array.isArray(mapeo.pasos[0]?.acciones)) {
+    return mapeo.pasos
+      .filter((paso) => paso.acciones?.length)
+      .map((paso) => ({
+        nombre:  paso.nombre || "Paso",
+        acciones: paso.acciones
+          .filter((a) => a.selector)
+          .map((a) => ({
+            tipo:        a.tipo || "click",
+            selector:    a.selector,
+            valor:       a.valor || "",
+            nombreCampo: a.campo || a.nombreCampo || "",
+            etiqueta:    a.campo || "",
+          })),
+      }))
+      .filter((paso) => paso.acciones.length > 0);
+  }
+
+  // Legacy flat format: pasos[].selector
+  if (mapeo?.pasos?.length && mapeo.pasos[0]?.selector) {
+    return mapeo.pasos
+      .filter((paso) => paso.selector)
+      .map((paso, i) => ({
+        nombre:  paso.nombre || `Paso ${i + 1}`,
+        acciones: [{
+          tipo:     paso.accion || paso.tipo || "click",
+          selector: paso.selector,
+          valor:    paso.valor ?? acciones[i]?.valor ?? "",
+          nombreCampo: paso.nombre || "",
+        }],
+      }));
+  }
+
+  // Fallback: replay raw recorded actions grouped by URL (each URL = one step)
+  const grupos = [];
+  let grupoActual = null;
+
+  for (const accion of acciones) {
+    if (!grupoActual || grupoActual.url !== accion.url) {
+      grupoActual = { url: accion.url, nombre: "Página " + (grupos.length + 1), acciones: [] };
+      grupos.push(grupoActual);
+    }
+    grupoActual.acciones.push(accion);
+  }
+
+  return grupos.map((g) => ({ nombre: g.nombre, acciones: g.acciones }));
+}
+
+// ─── DOM helpers ──────────────────────────────────────────────────────────────
+
+async function capturarSnapshotPagina(tabId) {
+  const result = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      const items = [];
+      document.querySelectorAll(
+        "h1,h2,h3,p,span,label,td,[class*='price'],[class*='name'],[class*='title'],[class*='product'],[data-testid]"
+      ).forEach((el) => {
+        const text = (el.innerText || el.textContent || "").trim().replace(/\s+/g, " ");
+        if (!text || text.length > 200 || text.length < 2) return;
+        if (el.closest("#edy-agent-host")) return;
+        let selector = el.id ? "#" + CSS.escape(el.id) : el.tagName.toLowerCase();
+        items.push({ selector, text, tag: el.tagName.toLowerCase() });
+      });
+      return items.slice(0, 60);
+    },
+  });
+  return result?.[0]?.result || [];
+}
+
+async function encontrarOAbrirTab(url) {
+  let urlObj;
+  try { urlObj = new URL(url); } catch { throw new Error("URL inválida: " + url); }
+
+  const tabs = await chrome.tabs.query({});
+  const existing = tabs.find((t) => {
+    try { return new URL(t.url).origin === urlObj.origin; } catch { return false; }
+  });
+
+  if (existing) {
+    await chrome.tabs.update(existing.id, { active: true });
+    await esperar(300);
+    return existing.id;
+  }
+
+  const newTab = await chrome.tabs.create({ url });
+  await esperarTabCargada(newTab.id);
+  return newTab.id;
+}
+
+function esperarTabCargada(tabId, timeout = 15000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Timeout cargando pestaña")), timeout);
+    const listener = (id, changeInfo) => {
+      if (id !== tabId || changeInfo.status !== "complete") return;
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(listener);
+      setTimeout(resolve, 400);
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+  });
+}
+
+// ─── Recorder injection / retrieval ──────────────────────────────────────────
 async function enviarAAppsScript(payload, appsScriptUrl) {
   const url = appsScriptUrl || (await obtenerPedidosBackendUrl());
   if (!url) return null;
@@ -338,8 +484,7 @@ async function inyectarGrabador(tabId) {
     target: { tabId },
     func: () => {
       if (window.__edyRecorderActivo) return;
-
-      window.__edyRecorderActivo = true;
+      window.__edyRecorderActivo  = true;
       window.__edyRecorderAcciones = [];
 
       const selectorPara = (el) => {
@@ -349,14 +494,15 @@ async function inyectarGrabador(tabId) {
         if (name) return el.tagName.toLowerCase() + '[name="' + CSS.escape(name) + '"]';
         const aria = el.getAttribute("aria-label");
         if (aria) return el.tagName.toLowerCase() + '[aria-label="' + CSS.escape(aria) + '"]';
-
+        const testId = el.getAttribute("data-test") || el.getAttribute("data-testid");
+        if (testId) return '[data-test="' + testId + '"]';
         const partes = [];
         let actual = el;
         while (actual && actual.nodeType === Node.ELEMENT_NODE && partes.length < 4) {
           let parte = actual.tagName.toLowerCase();
           const parent = actual.parentElement;
           if (parent) {
-            const iguales = Array.from(parent.children).filter((hijo) => hijo.tagName === actual.tagName);
+            const iguales = Array.from(parent.children).filter((h) => h.tagName === actual.tagName);
             if (iguales.length > 1) parte += ":nth-of-type(" + (iguales.indexOf(actual) + 1) + ")";
           }
           partes.unshift(parte);
@@ -372,40 +518,65 @@ async function inyectarGrabador(tabId) {
           el.closest("label")?.innerText ||
           el.getAttribute("aria-label") ||
           el.getAttribute("placeholder") ||
+          el.getAttribute("data-test") ||
           el.getAttribute("name") ||
           el.id ||
           el.textContent;
-
         return String(label || "").trim().replace(/\s+/g, " ").slice(0, 80);
       };
 
       const guardar = (tipo, el) => {
-        if (el.closest?.("#edy-agent-host")) return;
-
+        if (!el || el.closest?.("#edy-agent-host")) return;
+        const sel = selectorPara(el);
+        if (!sel) return; // skip unidentifiable elements
         const accion = {
-          id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + "-" + Math.random(),
+          id:          crypto.randomUUID?.() || String(Date.now()) + "-" + Math.random(),
           tipo,
-          selector: selectorPara(el),
-          valor: "value" in el ? el.value : "",
-          texto: el.innerText || el.textContent || "",
-          tag: el.tagName?.toLowerCase(),
+          selector:    sel,
+          valor:       "value" in el ? el.value : "",
+          texto:       (el.innerText || el.textContent || "").trim().slice(0, 100),
+          tag:         el.tagName?.toLowerCase(),
           nombreCampo: etiquetaPara(el),
-          timestamp: Date.now(),
-          url: location.href,
+          timestamp:   Date.now(),
+          url:         location.href,
         };
-
         window.__edyRecorderAcciones.push(accion);
         chrome.runtime.sendMessage({ tipo: "accion_grabada", accion });
       };
 
-      const onClick = (event) => guardar("click", event.target);
-      const onInput = (event) => guardar("input", event.target);
-      const onChange = (event) => guardar("change", event.target);
-      const onSubmit = (event) => guardar("submit", event.target);
+      // Bubble up to the real interactive element so we don't record inner <span> children.
+      // Also skip clicks on text inputs — those are handled by the input/change listeners.
+      const INTERACTIVE = 'button, a[href], [role="button"], [role="link"], [role="menuitem"], ' +
+        '[role="option"], [role="tab"], input[type="submit"], input[type="button"], ' +
+        'input[type="checkbox"], input[type="radio"], select, label, ' +
+        '[data-test], [data-testid], [data-cy]';
+
+      const TEXT_INPUT_TYPES = new Set(['text','password','email','number','search','tel','url','date','time','']);
+
+      const onClick = (e) => {
+        const tag  = e.target.tagName?.toLowerCase();
+        const type = (e.target.type || "").toLowerCase();
+        // Skip clicks on text inputs — input events cover those
+        if ((tag === 'input' && TEXT_INPUT_TYPES.has(type)) || tag === 'textarea') return;
+        // Bubble up to nearest real interactive ancestor
+        const el = e.target.closest(INTERACTIVE) || e.target;
+        guardar("click", el);
+      };
+
+      const onInput  = (e) => guardar("input",  e.target);
+      const onChange = (e) => {
+        // Capture selects and checkboxes via change
+        const tag = e.target.tagName?.toLowerCase();
+        const type = (e.target.type || "").toLowerCase();
+        if (tag === 'select' || type === 'checkbox' || type === 'radio') {
+          guardar("change", e.target);
+        }
+      };
+      const onSubmit = (e) => guardar("submit", e.target);
 
       window.__edyRecorderHandlers = { onClick, onInput, onChange, onSubmit };
-      document.addEventListener("click", onClick, true);
-      document.addEventListener("input", onInput, true);
+      document.addEventListener("click",  onClick,  true);
+      document.addEventListener("input",  onInput,  true);
       document.addEventListener("change", onChange, true);
       document.addEventListener("submit", onSubmit, true);
     },
@@ -413,24 +584,23 @@ async function inyectarGrabador(tabId) {
 }
 
 async function obtenerAccionesDelGrabador(tabId) {
-  const resultados = await chrome.scripting.executeScript({
+  const res = await chrome.scripting.executeScript({
     target: { tabId },
-    func: () => window.__edyRecorderAcciones || [],
+    func:   () => window.__edyRecorderAcciones || [],
   });
-
-  return normalizarAcciones(resultados?.[0]?.result || []);
+  return normalizarAcciones(res?.[0]?.result || []);
 }
 
 async function detenerGrabador(tabId) {
   await chrome.scripting.executeScript({
     target: { tabId },
     func: () => {
-      const handlers = window.__edyRecorderHandlers;
-      if (handlers) {
-        document.removeEventListener("click", handlers.onClick, true);
-        document.removeEventListener("input", handlers.onInput, true);
-        document.removeEventListener("change", handlers.onChange, true);
-        document.removeEventListener("submit", handlers.onSubmit, true);
+      const h = window.__edyRecorderHandlers;
+      if (h) {
+        document.removeEventListener("click",  h.onClick,  true);
+        document.removeEventListener("input",  h.onInput,  true);
+        document.removeEventListener("change", h.onChange, true);
+        document.removeEventListener("submit", h.onSubmit, true);
       }
       window.__edyRecorderActivo = false;
     },
@@ -438,125 +608,117 @@ async function detenerGrabador(tabId) {
 }
 
 async function ejecutarAccionEnTab(tabId, accion) {
-  await chrome.scripting.executeScript({
+  // Delegate to content_script.js's edyEjecutarAccion which has full semantic fallback
+  // including contexto (product name) for finding "Add to cart" buttons reliably.
+  const results = await chrome.scripting.executeScript({
     target: { tabId },
-    args: [accion],
-    func: (accionAEjecutar) => {
-      const el = document.querySelector(accionAEjecutar.selector);
-      if (!el) throw new Error("No se encontro selector: " + accionAEjecutar.selector);
-
+    args:   [accion],
+    func:   async (a) => {
+      if (window.edyEjecutarAccion) {
+        return window.edyEjecutarAccion({
+          tipo:        a.tipo,
+          selector:    a.selector,
+          valor:       a.valor,
+          nombreCampo: a.nombreCampo,
+          etiqueta:    a.nombreCampo,
+          texto:       a.texto,
+          contexto:    a.contexto,
+        });
+      }
+      // Minimal fallback if content script is not ready
+      const el = a.selector ? document.querySelector(a.selector) : null;
+      if (!el) return false;
       el.scrollIntoView({ block: "center", behavior: "smooth" });
-      el.focus?.();
-
-      if (accionAEjecutar.tipo === "input" || accionAEjecutar.tipo === "change") {
-        el.value = accionAEjecutar.valor || "";
-        el.dispatchEvent(new Event("input", { bubbles: true }));
+      if (a.tipo === "input") {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+        if (setter) setter.call(el, a.valor || ""); else el.value = a.valor || "";
+        el.dispatchEvent(new Event("input",  { bubbles: true }));
         el.dispatchEvent(new Event("change", { bubbles: true }));
-        return;
+      } else {
+        el.click();
       }
-
-      if (accionAEjecutar.tipo === "submit") {
-        el.closest("form")?.requestSubmit?.();
-        return;
-      }
-
-      el.click();
+      return true;
     },
   });
+  return results?.[0]?.result;
 }
 
+// ─── Local fallback inference ─────────────────────────────────────────────────
+
 function inferirMapeoLocal(acciones) {
-  const campos = [];
-  const vistos = new Set();
-
+  // Group actions by URL into logical steps
+  const mapaUrl = new Map();
   for (const accion of acciones) {
-    if (!accion.selector || vistos.has(accion.selector)) continue;
-    vistos.add(accion.selector);
+    if (!mapaUrl.has(accion.url)) mapaUrl.set(accion.url, []);
+    mapaUrl.get(accion.url).push(accion);
+  }
 
-    campos.push({
-      nombre_semantico: normalizarNombreSemantico(accion.nombreCampo || accion.selector),
-      selector: accion.selector,
-      evidencia: accion.nombreCampo || accion.texto || accion.tag || "",
+  const pasos = [];
+  let stepNum = 1;
+  for (const [, acts] of mapaUrl) {
+    pasos.push({
+      nombre:  "Paso " + stepNum++,
+      acciones: acts.map((a) => ({
+        tipo:     a.tipo,
+        selector: a.selector,
+        valor:    a.valor,
+        campo:    a.nombreCampo,
+      })).filter((a) => a.selector),
     });
   }
 
   return {
-    origen: "fallback_local_sin_backend_gemini",
-    campos,
-    pasos: acciones.map((accion, index) => ({
-      nombre: PASOS_EJECUCION[index] || nombrePasoDesdeAccion(accion, index),
-      accion: accion.tipo,
-      selector: accion.selector,
-      valor: accion.valor,
-    })),
-    datos_pedido: {},
+    portal_url:          acciones[0]?.url || "",
+    tipo_flujo:          "orden_proveedor",
+    origen:              "fallback_local",
+    pasos,
+    campos_confirmacion: [],
   };
 }
 
-function normalizarNombreSemantico(nombre) {
-  const limpio = String(nombre || "campo")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
+// ─── Utilities ────────────────────────────────────────────────────────────────
 
-  if (limpio.includes("cliente")) return "cliente_id";
-  if (limpio.includes("sku") || limpio.includes("producto")) return "sku";
-  if (limpio.includes("cantidad") || limpio.includes("qty")) return "cantidad";
-  if (limpio.includes("fecha")) return "fecha_entrega";
-  return limpio || "campo";
+function normalizarAcciones(acc) {
+  return Array.isArray(acc) ? acc.map((a) => normalizarAccion(a)) : [];
 }
 
-function normalizarAcciones(acciones) {
-  return Array.isArray(acciones) ? acciones.map((accion) => normalizarAccion(accion)) : [];
-}
-
-function normalizarAccion(accion, tabId) {
+function normalizarAccion(a, tabId) {
   return {
-    id: accion?.id || "",
-    tipo: accion?.tipo || "click",
-    selector: accion?.selector || "",
-    valor: accion?.valor || "",
-    texto: String(accion?.texto || "").slice(0, 120),
-    tag: accion?.tag || "",
-    nombreCampo: accion?.nombreCampo || accion?.campo || "",
-    timestamp: accion?.timestamp || Date.now(),
-    url: accion?.url || "",
-    tabId: accion?.tabId || tabId || null,
+    id:          a?.id || "",
+    tipo:        a?.tipo || "click",
+    selector:    a?.selector || "",
+    valor:       a?.valor || "",
+    texto:       String(a?.texto || "").slice(0, 120),
+    contexto:    String(a?.contexto || "").slice(0, 120), // nearby product name
+    tag:         a?.tag || "",
+    nombreCampo: a?.nombreCampo || a?.campo || "",
+    timestamp:   a?.timestamp || Date.now(),
+    url:         a?.url || "",
+    tabId:       a?.tabId || tabId || null,
   };
 }
 
 function unirAcciones(base, nuevas) {
   const resultado = normalizarAcciones(base);
   const firmas = new Set(resultado.map(firmaAccion));
-
-  for (const accion of normalizarAcciones(nuevas)) {
-    const firma = firmaAccion(accion);
-    if (firmas.has(firma)) continue;
-    firmas.add(firma);
-    resultado.push(accion);
+  for (const a of normalizarAcciones(nuevas)) {
+    const f = firmaAccion(a);
+    if (firmas.has(f)) continue;
+    firmas.add(f);
+    resultado.push(a);
   }
-
   return resultado;
 }
 
-function firmaAccion(accion) {
-  if (accion.id) return accion.id;
-  return [
-    accion.tipo,
-    accion.selector,
-    accion.valor,
-    accion.timestamp,
-    accion.url,
-  ].join("|");
+function firmaAccion(a) {
+  return a.id || [a.tipo, a.selector, a.valor, a.timestamp, a.url].join("|");
 }
 
-function nombrePasoDesdeAccion(accion, index) {
-  const campo = accion.nombreCampo || accion.selector || "accion";
-  if (accion.tipo === "input" || accion.tipo === "change") return "Capturar " + campo;
-  if (accion.tipo === "click") return "Click en " + campo;
-  return "Paso " + (index + 1);
+function nombrePasoDesdeAccion(a, i) {
+  const campo = a.nombreCampo || a.selector || "accion";
+  if (a.tipo === "input" || a.tipo === "change") return "Capturar " + campo;
+  if (a.tipo === "click") return "Click en " + campo;
+  return "Paso " + (i + 1);
 }
 
 async function obtenerTabActiva() {
@@ -565,73 +727,57 @@ async function obtenerTabActiva() {
 }
 
 async function cargarEstadoPersistido() {
-  const storage = await chrome.storage.local.get([
+  const s = await chrome.storage.local.get([
     STORAGE_KEYS.estado,
-    STORAGE_KEYS.tabGrabandoId,
+    STORAGE_KEYS.originTabId,
+    STORAGE_KEYS.originUrl,
     STORAGE_KEYS.acciones,
+    STORAGE_KEYS.originSnapshot,
   ]);
-
-  estado = storage[STORAGE_KEYS.estado] || estado || "idle";
-  tabGrabandoId = storage[STORAGE_KEYS.tabGrabandoId] || tabGrabandoId || null;
-  accionesGrabadas = normalizarAcciones(storage[STORAGE_KEYS.acciones] || accionesGrabadas);
-
-  return { estado, tabGrabandoId, accionesGrabadas };
+  estado           = s[STORAGE_KEYS.estado]        || estado        || "idle";
+  originTabId      = s[STORAGE_KEYS.originTabId]   || originTabId   || null;
+  originUrl        = s[STORAGE_KEYS.originUrl]      || originUrl     || null;
+  accionesGrabadas = normalizarAcciones(s[STORAGE_KEYS.acciones] || accionesGrabadas);
+  originSnapshot   = s[STORAGE_KEYS.originSnapshot] || originSnapshot || [];
 }
 
 async function sincronizarTabDespuesDeNavegacion(tabId) {
   await cargarEstadoPersistido();
-  if (estado === "idle" || tabId !== tabGrabandoId) return;
-
-  if (estado === "observando") {
-    await inyectarGrabador(tabId);
-  }
-
-  await chrome.tabs.sendMessage(tabId, {
-    tipo: "estado_agente",
-    estado,
-    totalAcciones: accionesGrabadas.length,
-  }).catch(() => {});
+  if (estado !== "observando" || tabId !== originTabId) return;
+  // Tell the content script on the new page to start recording immediately
+  await chrome.tabs.sendMessage(tabId, { tipo: "iniciar_grabacion_tab" }).catch(() => {});
+  await chrome.tabs.sendMessage(tabId, { tipo: "estado_agente", estado, totalAcciones: accionesGrabadas.length }).catch(() => {});
 }
 
 async function sincronizarContentScript(tabId) {
   await cargarEstadoPersistido();
-
-  const tabEsDelAgente = !tabGrabandoId || tabId === tabGrabandoId;
-  if (estado === "observando" && tabEsDelAgente && tabId) {
-    await inyectarGrabador(tabId);
-  }
-
-  return {
-    ok: true,
-    estado: tabEsDelAgente ? estado : "idle",
-    totalAcciones: accionesGrabadas.length,
-  };
+  const esOrigen = !originTabId || tabId === originTabId;
+  // content_script.js starts recording on its own when it receives estado_agente="observando"
+  return { ok: true, estado: esOrigen ? estado : "idle", totalAcciones: accionesGrabadas.length };
 }
 
 async function enviarATodos(mensaje) {
   await chrome.runtime.sendMessage(mensaje).catch(() => {});
-
   const tabs = await chrome.tabs.query({});
-  await Promise.all(
-    tabs.map((tab) => {
-      if (!tab.id) return Promise.resolve();
-      return chrome.tabs.sendMessage(tab.id, mensaje).catch(() => {});
-    })
-  );
+  await Promise.all(tabs.map((t) => t.id
+    ? chrome.tabs.sendMessage(t.id, mensaje).catch(() => {})
+    : Promise.resolve()
+  ));
 }
 
-function guardarLocal(datos) {
-  return chrome.storage.local.set(datos);
-}
-
-function esperar(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function formatearHora(timestamp) {
-  return new Date(timestamp).toLocaleTimeString("es-MX", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
+async function enviarAAppsScript(payload, url) {
+  if (!url) return null;
+  const resp = await fetch(url, {
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify(payload),
   });
+  if (!resp.ok) throw new Error("Apps Script respondió " + resp.status);
+  return resp.text();
+}
+
+function guardarLocal(datos) { return chrome.storage.local.set(datos); }
+function esperar(ms) { return new Promise((r) => setTimeout(r, ms)); }
+function formatearHora(ts) {
+  return new Date(ts).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
